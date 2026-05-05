@@ -1,0 +1,417 @@
+"use client";
+
+import { Building2, Filter, MapPin, Radar } from "lucide-react";
+
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  NativeSelect,
+  NativeSelectOption,
+} from "@/components/ui/native-select";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
+import type { BusinessRow } from "@/lib/sales/types";
+
+export type RevenueFilter = "all" | "decline" | "growth";
+
+type Option = { value: string; label: string };
+
+type FilterSidebarProps = {
+  sidoOptions: Option[];
+  sigunguOptions: Option[];
+  dongOptions: Option[];
+  selectedSido: string;
+  selectedSigungu: string;
+  selectedDong: string;
+  onSidoChange: (v: string) => void;
+  onSigunguChange: (v: string) => void;
+  onDongChange: (v: string) => void;
+  indLargeOptions: Option[];
+  indMediumOptions: Option[];
+  indSmallOptions: Option[];
+  selectedIndLarge: string;
+  selectedIndMedium: string;
+  selectedIndSmall: string;
+  onIndLargeChange: (v: string) => void;
+  onIndMediumChange: (v: string) => void;
+  onIndSmallChange: (v: string) => void;
+  revenueFilter: RevenueFilter;
+  onRevenueChange: (v: RevenueFilter) => void;
+  businesses: BusinessRow[];
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+  getPriority: (b: BusinessRow) => boolean;
+  stanQuery?: string;
+  onStanQueryChange?: (v: string) => void;
+  stanHits?: { code: string; label: string }[];
+  selectedStan?: { code: string; label: string } | null;
+  onSelectStan?: (v: { code: string; label: string } | null) => void;
+  onStanHitsClear?: () => void;
+  onFetchCommercialStores?: () => void;
+  commercialLoading?: boolean;
+  /** 행정표준 검색 API 오류 메시지 */
+  stanSearchError?: string | null;
+};
+
+/** 필터·업체 리스트(PRD 우측 패널). */
+export const FilterSidebar = ({
+  sidoOptions,
+  sigunguOptions,
+  dongOptions,
+  selectedSido,
+  selectedSigungu,
+  selectedDong,
+  onSidoChange,
+  onSigunguChange,
+  onDongChange,
+  indLargeOptions,
+  indMediumOptions,
+  indSmallOptions,
+  selectedIndLarge,
+  selectedIndMedium,
+  selectedIndSmall,
+  onIndLargeChange,
+  onIndMediumChange,
+  onIndSmallChange,
+  revenueFilter,
+  onRevenueChange,
+  businesses,
+  selectedId,
+  onSelect,
+  getPriority,
+  stanQuery = "",
+  onStanQueryChange,
+  stanHits = [],
+  selectedStan,
+  onSelectStan,
+  onStanHitsClear,
+  onFetchCommercialStores,
+  commercialLoading = false,
+  stanSearchError = null,
+}: FilterSidebarProps) => {
+  /** 행정표준 지역 선택 시 입력·목록·선택 상태를 동기화합니다. */
+  const handleSelectStan = (
+    e: React.MouseEvent<HTMLButtonElement>,
+    hit: { code: string; label: string }
+  ) => {
+    e.preventDefault();
+    onSelectStan?.({ code: hit.code, label: hit.label });
+    onStanQueryChange?.(hit.label);
+    onStanHitsClear?.();
+  };
+
+  return (
+    <aside className="flex h-full min-h-0 flex-col overflow-hidden rounded-none border border-border bg-card shadow-sm ring-1 ring-foreground/5">
+      <div className="border-b border-border bg-brand-primary px-4 py-3 text-primary-foreground">
+        <div className="flex items-center gap-2">
+          <Filter className="size-3.5 opacity-90" />
+          <h2 className="font-heading text-xs font-semibold tracking-widest uppercase">
+            필터 · 목록
+          </h2>
+        </div>
+      </div>
+
+      <div className="space-y-4 border-b border-border p-4">
+        <div className="space-y-1.5">
+          <Label className="text-[0.65rem] tracking-widest uppercase text-muted-foreground">
+            행정동 (3단계)
+          </Label>
+          <NativeSelect
+            value={selectedSido}
+            onChange={(e) => onSidoChange(e.target.value)}
+            className="w-full"
+          >
+            <NativeSelectOption value="">시/도 선택</NativeSelectOption>
+            {sidoOptions.map((r) => (
+              <NativeSelectOption key={r.value} value={r.value}>
+                {r.label}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+          <NativeSelect
+            key={`sigungu-${selectedSido}`}
+            value={selectedSigungu || ""}
+            onChange={(e) => onSigunguChange(e.target.value)}
+            className="w-full"
+            disabled={!selectedSido}
+          >
+            <NativeSelectOption value="">
+              {selectedSido ? "시/군/구 선택" : "먼저 시/도를 선택하세요"}
+            </NativeSelectOption>
+            {sigunguOptions.map((r) => (
+              <NativeSelectOption key={r.value} value={r.value}>
+                {r.label}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+          <NativeSelect
+            key={`dong-${selectedSido}-${selectedSigungu}`}
+            value={selectedDong || ""}
+            onChange={(e) => onDongChange(e.target.value)}
+            className="w-full"
+            disabled={!selectedSigungu}
+          >
+            <NativeSelectOption value="">
+              {selectedSigungu ? "읍/면/동 선택" : "먼저 시/군/구를 선택하세요"}
+            </NativeSelectOption>
+            {dongOptions.map((r) => (
+              <NativeSelectOption key={r.value} value={r.value}>
+                {r.label}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+        </div>
+
+        <div className="space-y-1.5">
+          <Label className="text-[0.65rem] tracking-widest uppercase text-muted-foreground">
+            업종 (3단계)
+          </Label>
+          <NativeSelect
+            value={selectedIndLarge}
+            onChange={(e) => onIndLargeChange(e.target.value)}
+            className="w-full"
+          >
+            <NativeSelectOption value="">대분류 선택</NativeSelectOption>
+            {indLargeOptions.map((c) => (
+              <NativeSelectOption key={c.value} value={c.value}>
+                {c.label}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+          <NativeSelect
+            key={`ind-medium-${selectedIndLarge}`}
+            value={selectedIndMedium || ""}
+            onChange={(e) => onIndMediumChange(e.target.value)}
+            className="w-full"
+            disabled={!selectedIndLarge}
+          >
+            <NativeSelectOption value="">
+              {selectedIndLarge ? "중분류 선택" : "먼저 대분류를 선택하세요"}
+            </NativeSelectOption>
+            {indMediumOptions.map((c) => (
+              <NativeSelectOption key={c.value} value={c.value}>
+                {c.label}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+          <NativeSelect
+            key={`ind-small-${selectedIndLarge}-${selectedIndMedium}`}
+            value={selectedIndSmall || ""}
+            onChange={(e) => onIndSmallChange(e.target.value)}
+            className="w-full"
+            disabled={!selectedIndMedium}
+          >
+            <NativeSelectOption value="">
+              {selectedIndMedium ? "소분류 선택" : "먼저 중분류를 선택하세요"}
+            </NativeSelectOption>
+            {indSmallOptions.map((c) => (
+              <NativeSelectOption key={c.value} value={c.value}>
+                {c.label}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+        </div>
+
+        <div className="space-y-2">
+          <Label className="text-[0.65rem] tracking-widest uppercase text-muted-foreground">
+            매출 추세
+          </Label>
+          <div className="flex flex-wrap gap-1">
+            <Button
+              type="button"
+              size="xs"
+              variant={revenueFilter === "all" ? "default" : "outline"}
+              onClick={() => onRevenueChange("all")}
+            >
+              전체
+            </Button>
+            <Button
+              type="button"
+              size="xs"
+              variant={revenueFilter === "decline" ? "default" : "outline"}
+              className={
+                revenueFilter === "decline"
+                  ? "border-brand-negative bg-brand-negative text-white hover:bg-brand-negative/90"
+                  : ""
+              }
+              onClick={() => onRevenueChange("decline")}
+            >
+              하락(위기)
+            </Button>
+            <Button
+              type="button"
+              size="xs"
+              variant={revenueFilter === "growth" ? "default" : "outline"}
+              className={
+                revenueFilter === "growth"
+                  ? "border-brand-positive bg-brand-positive text-white hover:bg-brand-positive/90"
+                  : ""
+              }
+              onClick={() => onRevenueChange("growth")}
+            >
+              성장
+            </Button>
+          </div>
+        </div>
+
+        {onStanQueryChange && onSelectStan ? (
+          <div className="space-y-2 border-t border-border pt-4">
+            <div className="flex items-center gap-2 text-brand-primary">
+              <Radar className="size-3.5" />
+              <span className="text-[0.65rem] font-semibold tracking-widest uppercase">
+                공공 API · 행정표준 검색
+              </span>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-[0.65rem] text-muted-foreground">
+                지역명(2자 이상)
+              </Label>
+              <div className="relative">
+                <Input
+                  value={stanQuery}
+                  onChange={(e) => onStanQueryChange(e.target.value)}
+                  placeholder="예: 범어1동, 강남"
+                  className="h-9 text-xs"
+                />
+                {stanHits.length > 0 ? (
+                  <ul className="absolute z-50 mt-1 max-h-60 w-full overflow-y-auto border bg-white shadow-md">
+                    {stanHits.map((h) => (
+                      <li key={h.code}>
+                        <button
+                          type="button"
+                          onMouseDown={(e) => handleSelectStan(e, h)}
+                          onDoubleClick={(e) => handleSelectStan(e, h)}
+                          className="flex w-full items-start gap-2 px-2 py-1.5 text-left text-xs hover:bg-muted"
+                        >
+                          <MapPin className="mt-0.5 size-3 shrink-0 text-brand-accent" />
+                          <span>
+                            <span className="font-mono text-[0.6rem] text-muted-foreground">
+                              {h.code}
+                            </span>
+                            <br />
+                            {h.label}
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+              {stanSearchError ? (
+                <p className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-[0.65rem] text-amber-900 dark:text-amber-100">
+                  {stanSearchError}
+                </p>
+              ) : null}
+              {selectedStan ? (
+                <p className="text-[0.65rem] text-brand-positive">
+                  선택됨: {selectedStan.label}
+                </p>
+              ) : null}
+            </div>
+            {onFetchCommercialStores ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="w-full border-brand-primary text-brand-primary hover:bg-brand-primary/10"
+                disabled={!selectedStan?.code || commercialLoading}
+                onClick={onFetchCommercialStores}
+              >
+                {commercialLoading ? "불러오는 중…" : "상가업소 불러오기"}
+              </Button>
+            ) : null}
+            <p className="text-[0.6rem] leading-relaxed text-muted-foreground">
+              소상공인 상가 API(storeListInDong)로 선택 행정동의 점포를
+              지도·목록에 합칩니다. 인증키·API 신청은 공공데이터포털에서
+              확인하세요.
+            </p>
+          </div>
+        ) : null}
+      </div>
+
+      <div className="flex min-h-0 flex-1 flex-col px-2 pb-2 pt-3">
+        <p className="mb-2 px-2 text-[0.65rem] font-medium uppercase tracking-wider text-muted-foreground">
+          검색 결과 · {businesses.length}건
+        </p>
+        <ScrollArea className="min-h-0 flex-1 overflow-y-auto">
+          <ul className="space-y-1 pr-2">
+            {businesses.length === 0 ? (
+              <li className="px-3 py-8 text-center text-xs text-muted-foreground">
+                조건에 맞는 업체가 없습니다.
+              </li>
+            ) : (
+              businesses.map((b) => {
+                const priority = getPriority(b);
+                const crisis = b.revenueTrend < 0;
+                const active = b.id === selectedId;
+                return (
+                  <li key={b.id}>
+                    <button
+                      type="button"
+                      onClick={() => onSelect(b.id)}
+                      onDoubleClick={() => onSelect(b.id)}
+                      className={`w-full rounded-none border px-3 py-2.5 text-left text-xs transition-colors ${
+                        active
+                          ? "border-brand-primary bg-brand-primary/5 ring-1 ring-brand-primary/20"
+                          : "border-transparent hover:bg-muted/80"
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <span className="font-semibold text-foreground">
+                          {b.name || "상호 미상"}
+                        </span>
+                        <span
+                          className={`shrink-0 tabular-nums ${
+                            crisis
+                              ? "font-semibold text-brand-negative"
+                              : "text-brand-positive"
+                          }`}
+                        >
+                          {b.revenueTrend > 0 ? "+" : ""}
+                          {b.revenueTrend}%
+                        </span>
+                      </div>
+                      <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[0.65rem] text-muted-foreground">
+                        <span className="inline-flex items-center gap-1">
+                          <Building2 className="size-3" />
+                          {b.category || "업종 미상"}
+                        </span>
+                        {priority ? (
+                          <Badge
+                            variant="outline"
+                            className="border-brand-positive/40 text-[0.55rem] text-brand-positive"
+                          >
+                            우선
+                          </Badge>
+                        ) : null}
+                        {b.id.startsWith("ext-") ? (
+                          <Badge
+                            variant="outline"
+                            className="text-[0.55rem] text-muted-foreground"
+                          >
+                            공공
+                          </Badge>
+                        ) : null}
+                      </div>
+                      <p className="mt-0.5 truncate text-[0.65rem] text-muted-foreground">
+                        {b.address || "주소 정보 없음"}
+                      </p>
+                    </button>
+                  </li>
+                );
+              })
+            )}
+          </ul>
+        </ScrollArea>
+      </div>
+
+      <Separator />
+      <p className="px-4 py-2 text-[0.6rem] leading-snug text-muted-foreground">
+        매출 하락 + 공동주택 증가율 10% 초과 시 &quot;우선 영업 후보&quot;로
+        분류합니다. (PRD 5.1)
+      </p>
+    </aside>
+  );
+};
