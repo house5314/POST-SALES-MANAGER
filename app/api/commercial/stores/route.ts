@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { buildMockRevenueTrend } from "@/lib/commercial-api/mock-sales-metrics";
 import { fetchStoreListInDong } from "@/lib/commercial-api/semas-store";
 import type { BusinessRow } from "@/lib/sales/types";
 
@@ -78,9 +79,15 @@ export const GET = async (req: NextRequest) => {
         address: (row.rdnmAdr ?? row.lnoAdr ?? "").trim(),
         lnoAdr: (row.lnoAdr ?? "").trim() || null,
         regionCode: (row.ldongCd ?? row.adongCd ?? dongCd).trim(),
+        ldongCd: (row.ldongCd ?? "").trim() || null,
+        dataSource: "commercial_public" as const,
         lat: Number.isFinite(rawLat) ? rawLat : null,
         lng: Number.isFinite(rawLng) ? rawLng : null,
-        revenueTrend: 0,
+        revenueTrend: buildMockRevenueTrend(
+          (row.bizesId ?? `ext-${dongCd}-${idx}`).trim(),
+          dongCd,
+          row.indsLclsCd ?? indL ?? indsLclsCd
+        ),
         indsLclsCd: (row.indsLclsCd ?? indL ?? indsLclsCd ?? null) as string | null,
       };
     });

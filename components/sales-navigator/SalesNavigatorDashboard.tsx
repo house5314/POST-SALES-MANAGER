@@ -9,18 +9,30 @@ import {
 } from "@/components/sales-navigator/FilterSidebar";
 import { InsightCenterPanel } from "@/components/sales-navigator/InsightCenterPanel";
 import { NaverMapPanel } from "@/components/sales-navigator/NaverMapPanel";
-import { Spinner } from "@/components/ui/spinner";
+import { Badge } from "@/components/ui/badge";
 import type {
   IndustryMediumItem,
   IndustrySmallItem,
 } from "@/lib/commercial-api/semas-store";
-import { createSupabaseBrowserClient } from "@/lib/supabase/browser-client";
-import { loadSalesFromSupabase } from "@/lib/sales/load-from-supabase";
+import type { MolitAptComplex } from "@/lib/molit/types";
+import { calculatePostalQuote } from "@/lib/postal-calc";
+import { resolveLegalDongForMolit } from "@/lib/sales/resolve-legal-dong-for-molit";
 import { isPriorityLead } from "@/lib/sales/priority-lead";
 import type { BusinessRow, MarketStatRow } from "@/lib/sales/types";
 
 type IndsLarge = { indsLclsCd: string; indsLclsNm: string };
 type Option = { value: string; label: string };
+type EvlInfo = {
+  gender: "남성" | "여성";
+  ageGroup: string;
+  establishedYear: number;
+  yearsInBusiness: number;
+};
+type IndustryAvgStat = {
+  endpoint: string;
+  avgSalesAmount: number;
+  avgSalesPerArea: number;
+};
 const SIDO_LIST: Option[] = [
   "서울특별시",
   "부산광역시",
@@ -283,18 +295,17 @@ const SIGUNGU_DATA: Record<string, string[]> = {
   제주특별자치도: ["제주시", "서귀포시"],
 };
 
-/** PRD 레이아웃 + Supabase 데이터 + 공공 API 필터 오버레이. */
+/** PRD 레이아웃 + 공공 상가 API 오버레이(공모전 제출용 · DB 없음). */
 export const SalesNavigatorDashboard = () => {
   const clientId = process.env.NEXT_PUBLIC_NAVER_CLIENT_ID?.trim();
 
-  const [businesses, setBusinesses] = useState<BusinessRow[]>([]);
   const [overlayStores, setOverlayStores] = useState<BusinessRow[]>([]);
-  const [marketByRegion, setMarketByRegion] = useState<
-    Record<string, MarketStatRow>
-  >({});
-  const [loading, setLoading] = useState(true);
-  const [supabaseError, setSupabaseError] = useState<string | null>(null);
+  const [marketByRegion] = useState<Record<string, MarketStatRow>>({});
   const [apiError, setApiError] = useState<string | null>(null);
+  const [evlInfo, setEvlInfo] = useState<EvlInfo | null>(null);
+  const [industryAvgStat, setIndustryAvgStat] = useState<IndustryAvgStat | null>(
+    null
+  );
 
   const [indsLargeOptions, setIndsLargeOptions] = useState<IndsLarge[]>([]);
   const [indsLclsFilter, setIndsLclsFilter] = useState<string | "all">("all");
@@ -318,39 +329,6 @@ export const SalesNavigatorDashboard = () => {
   } | null>(null);
   const [commercialLoading, setCommercialLoading] = useState(false);
   const [stanSearchError, setStanSearchError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const supabase = createSupabaseBrowserClient();
-    if (!supabase) {
-      queueMicrotask(() => {
-        setSupabaseError(
-          "NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY 를 .env.local 에 설정하세요."
-        );
-        setLoading(false);
-      });
-      return;
-    }
-    let cancelled = false;
-    void (async () => {
-      try {
-        const { businesses: b, marketByRegion: m } =
-          await loadSalesFromSupabase(supabase);
-        if (cancelled) return;
-        setBusinesses(b);
-        setMarketByRegion(m);
-      } catch (e) {
-        if (cancelled) return;
-        setSupabaseError(
-          e instanceof Error ? e.message : "Supabase 에서 데이터를 읽지 못했습니다."
-        );
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   useEffect(() => {
     void (async () => {
@@ -413,13 +391,19 @@ export const SalesNavigatorDashboard = () => {
     return () => clearTimeout(t);
   }, [selectedStan, stanQuery]);
 
-  const allRows = useMemo(
-    () => [...businesses, ...overlayStores],
-    [businesses, overlayStores]
-  );
+  const allRows = overlayStores;
 
   const [revenueFilter, setRevenueFilter] = useState<RevenueFilter>("all");
   const [pickedId, setPickedId] = useState<string | null>(null);
+  const [aptRows, setAptRows] = useState<MolitAptComplex[]>([]);
+  const [aptLoading, setAptLoading] = useState(false);
+  const [aptError, setAptError] = useState<string | null>(null);
+  const [selectedAptIds, setSelectedAptIds] = useState<Set<string>>(new Set());
+  const [moveInPitch, setMoveInPitch] = useState<{
+    surge: boolean;
+    headline: string;
+    detail: string;
+  } | null>(null);
 
   /** 지역 라벨을 시/도-시군구-동으로 안전하게 분해합니다. */
   const parseRegionHierarchy = useCallback(
@@ -605,6 +589,13 @@ export const SalesNavigatorDashboard = () => {
     () => allRows.find((b) => b.id === activeId) ?? null,
     [activeId, allRows]
   );
+  const selectedLargeName = useMemo(() => {
+    if (!selectedIndLarge) return "";
+    return (
+      indsLargeOptions.find((x) => x.indsLclsCd === selectedIndLarge)?.indsLclsNm ??
+      ""
+    );
+  }, [indsLargeOptions, selectedIndLarge]);
 
   const market = selected
     ? marketByRegion[selected.regionCode]
@@ -618,6 +609,31 @@ export const SalesNavigatorDashboard = () => {
     );
   }, [market]);
 
+  /** 국토부 단지 선택이 있으면 세대 합산을 우선하고, 없으면 기존 추정 부수를 씁니다. */
+  const effectiveMailQty = useMemo(() => {
+    if (!aptRows.length || selectedAptIds.size === 0) return mailQuantity;
+    const sum = aptRows
+      .filter((a) => selectedAptIds.has(a.id))
+      .reduce((acc, a) => acc + a.households, 0);
+    return sum > 0 ? sum : mailQuantity;
+  }, [aptRows, mailQuantity, selectedAptIds]);
+
+  const postalQuote = useMemo(
+    () => calculatePostalQuote(effectiveMailQty),
+    [effectiveMailQty]
+  );
+
+  /** 지도 반경 원 중심 — 상가 좌표가 유효할 때만 표시합니다. */
+  const radiusAnchor = useMemo(() => {
+    if (!selected) return null;
+    const lat = Number(selected.lat);
+    const lng = Number(selected.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    if (lat === 0 && lng === 0) return null;
+    if (lat < 33 || lat > 39 || lng < 124 || lng > 132) return null;
+    return { lat, lng };
+  }, [selected]);
+
   const isPriority = selected
     ? isPriorityLead(selected, marketByRegion)
     : false;
@@ -630,6 +646,255 @@ export const SalesNavigatorDashboard = () => {
   const handleSelect = useCallback((id: string) => {
     setPickedId(id);
   }, [setPickedId]);
+
+  /** 지도에서 단지 마커 클릭 시 선택을 갱신합니다(Shift면 다중 토글). */
+  const handleAptMapSelect = useCallback(
+    (id: string, opts: { shiftKey: boolean }) => {
+      setSelectedAptIds((prev) => {
+        if (opts.shiftKey) {
+          const next = new Set(prev);
+          if (next.has(id)) next.delete(id);
+          else next.add(id);
+          return next;
+        }
+        return new Set([id]);
+      });
+    },
+    []
+  );
+
+  /** 체크박스로 단지 선택을 바꿉니다. */
+  const handleAptToggle = useCallback((id: string, checked: boolean) => {
+    setSelectedAptIds((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }, []);
+
+  /** 반경 내 단지 전체 선택. */
+  const handleSelectAllApts = useCallback(() => {
+    setSelectedAptIds(new Set(aptRows.map((a) => a.id)));
+  }, [aptRows]);
+
+  /** 단지 선택 초기화. */
+  const handleClearApts = useCallback(() => {
+    setSelectedAptIds(new Set());
+  }, []);
+
+  /** 선택된 업체의 개인사업자 평가정보를 조회해 중앙 패널로 전달합니다. */
+  useEffect(() => {
+    if (!selected) {
+      return;
+    }
+    let active = true;
+    void (async () => {
+      try {
+        const q = new URLSearchParams({
+          businessId: selected.id,
+          name: selected.name,
+        });
+        const res = await fetch(`/api/commercial/getEvlInfo?${q.toString()}`);
+        const data = (await res.json()) as {
+          ok: boolean;
+          info?: EvlInfo;
+          message?: string;
+        };
+        if (!active) return;
+        if (!data.ok || !data.info) {
+          setEvlInfo(null);
+          return;
+        }
+        setEvlInfo(data.info);
+      } catch {
+        if (active) setEvlInfo(null);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [selected]);
+
+  /** 법정동 기준 국토부 공동주택 단지 목록을 불러옵니다. */
+  useEffect(() => {
+    if (!selected) {
+      queueMicrotask(() => {
+        setAptRows([]);
+        setAptError(null);
+        setAptLoading(false);
+      });
+      return;
+    }
+    const bjdong = resolveLegalDongForMolit(selected);
+    if (!bjdong) {
+      queueMicrotask(() => {
+        setAptRows([]);
+        setAptError(
+          "이 상가 응답에 법정동코드(ldongCd)가 없어 단지 목록을 호출할 수 없습니다. 법정동이 있는 다른 상호를 선택하거나, 같은 법정동으로 조회되는 상가 데이터를 이용해 주세요."
+        );
+        setAptLoading(false);
+      });
+      return;
+    }
+
+    let cancelled = false;
+    queueMicrotask(() => {
+      setAptLoading(true);
+      setAptError(null);
+    });
+
+    const q = new URLSearchParams({ bjdongCd: bjdong });
+    const lat = Number(selected.lat);
+    const lng = Number(selected.lng);
+    if (
+      Number.isFinite(lat) &&
+      Number.isFinite(lng) &&
+      !(lat === 0 && lng === 0)
+    ) {
+      q.set("lat", String(lat));
+      q.set("lng", String(lng));
+    }
+    q.set("radiusM", "1000");
+
+    void (async () => {
+      try {
+        const res = await fetch(`/api/molit/getAptList?${q.toString()}`);
+        const data = (await res.json()) as {
+          ok: boolean;
+          message?: string;
+          items?: MolitAptComplex[];
+        };
+        if (cancelled) return;
+        if (!data.ok) {
+          setAptRows([]);
+          setAptError(data.message ?? "국토부 단지 목록을 불러오지 못했습니다.");
+          setSelectedAptIds(new Set());
+          return;
+        }
+        const items = data.items ?? [];
+        setAptRows(items);
+        setAptError(null);
+        setSelectedAptIds(new Set(items.map((x) => x.id)));
+      } catch (e) {
+        if (cancelled) return;
+        setAptRows([]);
+        setAptError(
+          e instanceof Error
+            ? e.message
+            : "국토부 단지 목록 조회 중 오류가 발생했습니다."
+        );
+        setSelectedAptIds(new Set());
+      } finally {
+        if (!cancelled) setAptLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selected]);
+
+  /** 이사·입주 트리거 문구(업종 규칙)를 조회합니다. */
+  useEffect(() => {
+    if (!selected) {
+      queueMicrotask(() => {
+        setMoveInPitch(null);
+      });
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const q = new URLSearchParams({
+          category: selected.category,
+          regionCode: selected.regionCode,
+        });
+        const res = await fetch(`/api/molit/getStatList?${q.toString()}`);
+        const data = (await res.json()) as {
+          ok: boolean;
+          surge?: boolean;
+          headline?: string;
+          detail?: string;
+        };
+        if (cancelled || !data.ok) {
+          if (!cancelled) setMoveInPitch(null);
+          return;
+        }
+        setMoveInPitch({
+          surge: !!data.surge,
+          headline: data.headline ?? "",
+          detail: data.detail ?? "",
+        });
+      } catch {
+        if (!cancelled) setMoveInPitch(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selected]);
+
+  /** 업종 대분류에 따라 평균매출 API 엔드포인트를 동적으로 분기 호출합니다. */
+  useEffect(() => {
+    const effectiveLargeName =
+      selectedLargeName ||
+      indsLargeOptions.find((x) => x.indsLclsCd === selected?.indsLclsCd)?.indsLclsNm ||
+      "";
+    const effectiveDong = selectedDong || selected?.regionCode || "";
+    if (!effectiveLargeName || !effectiveDong) {
+      queueMicrotask(() => {
+        setIndustryAvgStat(null);
+      });
+      return;
+    }
+    let endpoint = "/api/commercial/getAreaIndutyAvrSrvcStats";
+    if (effectiveLargeName.includes("외식")) {
+      endpoint = "/api/commercial/getAreaIndutyAvrOutStats";
+    } else if (
+      effectiveLargeName.includes("도소매") ||
+      effectiveLargeName.includes("소매")
+    ) {
+      endpoint = "/api/commercial/getAreaIndutyAvrWhrtStats";
+    }
+    let active = true;
+    void (async () => {
+      try {
+        const q = new URLSearchParams({ dong: effectiveDong });
+        if (selectedIndLarge || selected?.indsLclsCd) {
+          q.set("indL", selectedIndLarge || selected?.indsLclsCd || "");
+        }
+        const res = await fetch(`${endpoint}?${q.toString()}`);
+        const data = (await res.json()) as {
+          ok: boolean;
+          endpoint?: string;
+          avgSalesAmount?: number;
+          avgSalesPerArea?: number;
+        };
+        if (!active) return;
+        if (!data.ok) {
+          setIndustryAvgStat(null);
+          return;
+        }
+        setIndustryAvgStat({
+          endpoint: data.endpoint ?? endpoint,
+          avgSalesAmount: data.avgSalesAmount ?? 0,
+          avgSalesPerArea: data.avgSalesPerArea ?? 0,
+        });
+      } catch {
+        if (active) setIndustryAvgStat(null);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [
+    indsLargeOptions,
+    selected,
+    selectedDong,
+    selectedIndLarge,
+    selectedLargeName,
+  ]);
 
   /** 시/도 변경 시 하위 선택과 옵션을 즉시 초기화하고 새 옵션을 반영합니다. */
   const handleSidoChange = useCallback((newSido: string) => {
@@ -780,14 +1045,6 @@ export const SalesNavigatorDashboard = () => {
         </p>
       </header>
 
-      {supabaseError ? (
-        <div
-          className="mx-4 mt-4 rounded-none border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive lg:mx-8"
-          role="alert"
-        >
-          {supabaseError}
-        </div>
-      ) : null}
       {apiError ? (
         <div
           className="mx-4 mt-4 rounded-none border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-100 lg:mx-8"
@@ -797,29 +1054,44 @@ export const SalesNavigatorDashboard = () => {
         </div>
       ) : null}
 
-      {loading ? (
-        <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 py-20">
-          <Spinner className="size-8 text-brand-primary" />
-          <p className="text-sm text-muted-foreground">
-            Supabase에서 영업 데이터를 불러오는 중입니다.
-          </p>
-        </div>
-      ) : (
-        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden p-4 lg:grid lg:h-full lg:grid-cols-[minmax(0,1.2fr)_minmax(320px,420px)_minmax(260px,300px)] lg:grid-rows-1 lg:items-stretch lg:gap-5 lg:p-6">
-          <NaverMapPanel
-            clientId={clientId}
-            businesses={filtered}
-            selectedId={activeId}
-            selectedDongAddress={selectedDongAddress}
-            onMarkerSelect={handleSelect}
-          />
-          <InsightCenterPanel
-            business={selected}
-            market={market}
-            mailQuantity={mailQuantity}
-            isPriority={isPriority}
-          />
-          <FilterSidebar
+      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden p-4 lg:flex-row lg:gap-5 lg:p-6">
+          <div className="min-h-0 lg:w-[60%]">
+            <NaverMapPanel
+              clientId={clientId}
+              businesses={filtered}
+              selectedId={activeId}
+              selectedDongAddress={selectedDongAddress}
+              onMarkerSelect={handleSelect}
+              apartments={aptRows}
+              selectedAptIdList={[...selectedAptIds]}
+              onAptSelect={handleAptMapSelect}
+              radiusAnchor={radiusAnchor}
+            />
+          </div>
+          <div className="min-h-0 lg:w-[20%]">
+            <InsightCenterPanel
+              business={selected}
+              market={market}
+              mailQuantity={mailQuantity}
+              effectiveMailQty={effectiveMailQty}
+              postalQuote={postalQuote}
+              isPriority={isPriority}
+              evlInfo={evlInfo}
+              industryAvgStat={industryAvgStat}
+              selectedLargeName={selectedLargeName}
+              selectedDongLabel={selectedDongLabel}
+              apartments={aptRows}
+              aptLoading={aptLoading}
+              aptError={aptError}
+              selectedAptIds={selectedAptIds}
+              onAptToggle={handleAptToggle}
+              onSelectAllApts={handleSelectAllApts}
+              onClearApts={handleClearApts}
+              moveInPitch={moveInPitch}
+            />
+          </div>
+          <div className="min-h-0 lg:w-[20%]">
+            <FilterSidebar
             sidoOptions={sidoOptions}
             sigunguOptions={sigunguOptions}
             dongOptions={dongOptions}
@@ -853,9 +1125,26 @@ export const SalesNavigatorDashboard = () => {
             onFetchCommercialStores={handleFetchCommercialStores}
             commercialLoading={commercialLoading}
             stanSearchError={stanSearchError}
-          />
+            />
+          </div>
         </div>
-      )}
+      <div className="border-t border-border bg-muted/30 px-4 py-2 text-[0.65rem] text-muted-foreground lg:px-8">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant="outline" className="text-[0.55rem]">
+            실데이터
+          </Badge>
+          <Badge variant="outline" className="text-[0.55rem]">
+            가공데이터
+          </Badge>
+          <Badge variant="outline" className="text-[0.55rem]">
+            시뮬레이션
+          </Badge>
+          <span>
+            실데이터(공공 원천), 가공데이터(정제/규칙), 시뮬레이션(가정 기반)을
+            함께 사용합니다.
+          </span>
+        </div>
+      </div>
     </div>
   );
 };

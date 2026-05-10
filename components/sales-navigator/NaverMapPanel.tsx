@@ -3,6 +3,8 @@
 import Script from "next/script";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { Badge } from "@/components/ui/badge";
+import type { MolitAptComplex } from "@/lib/molit/types";
 import type { BusinessRow } from "@/lib/sales/types";
 
 type NaverMapPanelProps = {
@@ -12,6 +14,18 @@ type NaverMapPanelProps = {
   selectedId: string | null;
   selectedDongAddress?: string | null;
   onMarkerSelect: (id: string) => void;
+  /** 국토부 단지(반경 내). */
+  apartments?: MolitAptComplex[];
+  /** 지도에서 선택된 단지 id. */
+  selectedAptIdList?: string[];
+  /**
+   * 일반 클릭: 해당 단지만 선택. Shift+클릭: 단지 선택을 토글(다중).
+   * @param id 단지 id
+   * @param opts.shiftKey Shift 키 여부
+   */
+  onAptSelect?: (id: string, opts: { shiftKey: boolean }) => void;
+  /** 반경 1km 원 중심(선택된 상가 좌표). */
+  radiusAnchor?: { lat: number; lng: number } | null;
 };
 
 /** 한국 권역 기준(WGS84) 위경도 범위인지 확인합니다. */
@@ -53,12 +67,27 @@ export const NaverMapPanel = ({
   selectedId,
   selectedDongAddress,
   onMarkerSelect,
+  apartments = [],
+  selectedAptIdList = [],
+  onAptSelect,
+  radiusAnchor = null,
 }: NaverMapPanelProps) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<naver.maps.Map | null>(null);
   const markersRef = useRef<naver.maps.Marker[]>([]);
   const markerByIdRef = useRef<Map<string, naver.maps.Marker>>(new Map());
-  const infoWindowRef = useRef<{ open: (m: naver.maps.Map, mk: naver.maps.Marker) => void; close: () => void } | null>(null);
+  const aptMarkersRef = useRef<naver.maps.Marker[]>([]);
+  const radiusCircleRef = useRef<{ setMap: (m: naver.maps.Map | null) => void } | null>(
+    null
+  );
+  const infoWindowRef = useRef<{
+    open: (m: naver.maps.Map, mk: naver.maps.Marker) => void;
+    close: () => void;
+  } | null>(null);
+  const aptInfoWindowRef = useRef<{
+    open: (m: naver.maps.Map, mk: naver.maps.Marker) => void;
+    close: () => void;
+  } | null>(null);
   const [mapScriptReady, setMapScriptReady] = useState(false);
   const [correctedCoords, setCorrectedCoords] = useState<
     Record<string, { lat: number; lng: number }>
@@ -74,6 +103,7 @@ export const NaverMapPanel = ({
     markersRef.current = [];
     markerByIdRef.current.clear();
     infoWindowRef.current?.close();
+    aptInfoWindowRef.current?.close();
   };
 
   /** 선택된 행정동 경계선(GeoJSON) 로딩 지점을 위한 뼈대 함수입니다. */
@@ -100,6 +130,28 @@ export const NaverMapPanel = ({
       </div>
     `;
   };
+
+  /** 아파트 단지 마커(🏠) HTML을 생성합니다. */
+  const buildAptMarkerHtml = useCallback(
+    (name: string, households: number, isSelected: boolean) => {
+      const ring = isSelected
+        ? "box-shadow:0 0 0 3px rgba(37,99,235,0.5);"
+        : "box-shadow:0 1px 2px rgba(0,0,0,0.15);";
+      const bg = isSelected ? "#eff6ff" : "#ffffff";
+      const border = isSelected ? "2px solid #2563eb" : "1px solid #cbd5e1";
+      return `
+      <div style="position:relative;transform:translate(-50%,-100%);font-family:system-ui,sans-serif;">
+        <div style="width:28px;height:28px;border-radius:10px;background:${bg};border:${border};${ring}display:flex;align-items:center;justify-content:center;font-size:15px;line-height:1;">
+          🏠
+        </div>
+        <div style="margin-top:2px;max-width:140px;padding:2px 4px;font-size:9px;color:#334155;text-align:center;white-space:normal;word-break:keep-all;background:rgba(255,255,255,0.92);border:1px solid #e2e8f0;border-radius:4px;">
+          ${escapeHtml(name.slice(0, 18))}${name.length > 18 ? "…" : ""}<br/><span style="color:#64748b;">${households.toLocaleString("ko-KR")}세대</span>
+        </div>
+      </div>
+    `;
+    },
+    []
+  );
 
   const initMap = useCallback(() => {
     setMapScriptReady(true);
@@ -202,6 +254,140 @@ export const NaverMapPanel = ({
     });
   }, [businesses, correctedCoords, mapScriptReady, onMarkerSelect, selectedId]);
 
+  /** 국토부 단지 마커 및 선택 상태를 반영합니다. */
+  useEffect(() => {
+    if (
+      !mapRef.current ||
+      typeof window.naver?.maps === "undefined" ||
+      !mapScriptReady
+    ) {
+      return;
+    }
+
+    aptInfoWindowRef.current?.close();
+    aptMarkersRef.current.forEach((m) => {
+      m.setMap(null);
+    });
+    aptMarkersRef.current = [];
+
+    if (!onAptSelect || !apartments.length) return;
+
+    apartments.forEach((apt) => {
+      if (apt.lat == null || apt.lng == null) return;
+      const isSelected = selectedAptIdList.includes(apt.id);
+      const marker = new window.naver.maps.Marker({
+        position: new window.naver.maps.LatLng(apt.lat, apt.lng),
+        map: mapRef.current,
+        title: apt.name,
+        zIndex: isSelected ? 260 : 155,
+        icon: {
+          content: buildAptMarkerHtml(apt.name, apt.households, isSelected),
+          anchor: new window.naver.maps.Point(0, 0),
+        },
+      });
+
+      (
+        window.naver.maps.Event as unknown as {
+          addListener: (
+            target: naver.maps.Marker,
+            evt: string,
+            handler: (evt?: { domEvent?: MouseEvent }) => void
+          ) => void;
+        }
+      ).addListener(marker, "click", (evt) => {
+        const oe = evt?.domEvent;
+        const shiftKey = !!oe?.shiftKey;
+        onAptSelect(apt.id, { shiftKey });
+
+        infoWindowRef.current?.close();
+        const infoText = `${escapeHtml(apt.name)} (${apt.households.toLocaleString(
+          "ko-KR"
+        )}세대) — 타겟팅 추천`;
+        if (!aptInfoWindowRef.current) {
+          aptInfoWindowRef.current = new (
+            window.naver.maps as unknown as {
+              InfoWindow: new (opts: {
+                content: string;
+                borderWidth?: number;
+                backgroundColor?: string;
+                borderColor?: string;
+                anchorColor?: string;
+                disableAnchor?: boolean;
+                pixelOffset?: naver.maps.Point;
+              }) => {
+                open: (m: naver.maps.Map, mk: naver.maps.Marker) => void;
+                close: () => void;
+              };
+            }
+          ).InfoWindow({
+            content: `<div style="padding:10px;font-size:12px;max-width:220px;">${infoText}</div>`,
+            borderWidth: 1,
+            backgroundColor: "#ffffff",
+            borderColor: "#d1d5db",
+            anchorColor: "#ffffff",
+            disableAnchor: false,
+            pixelOffset: new window.naver.maps.Point(0, -6),
+          });
+        } else {
+          (
+            aptInfoWindowRef.current as unknown as {
+              setContent?: (content: string) => void;
+            }
+          ).setContent?.(
+            `<div style="padding:10px;font-size:12px;max-width:220px;">${infoText}</div>`
+          );
+        }
+        aptInfoWindowRef.current?.open(mapRef.current!, marker);
+      });
+
+      aptMarkersRef.current.push(marker);
+    });
+  }, [
+    apartments,
+    buildAptMarkerHtml,
+    mapScriptReady,
+    onAptSelect,
+    selectedAptIdList,
+  ]);
+
+  /** 선택 상가 기준 반경 1km 원을 표시합니다. */
+  useEffect(() => {
+    if (!mapRef.current || typeof window.naver?.maps === "undefined" || !mapScriptReady) {
+      return;
+    }
+    radiusCircleRef.current?.setMap(null);
+    radiusCircleRef.current = null;
+    if (!radiusAnchor) return;
+
+    const CircleCtor = (
+      window.naver.maps as unknown as {
+        Circle: new (opts: {
+          map: naver.maps.Map;
+          center: naver.maps.LatLng;
+          radius: number;
+          fillColor?: string;
+          fillOpacity?: number;
+          strokeColor?: string;
+          strokeOpacity?: number;
+          strokeWeight?: number;
+          zIndex?: number;
+        }) => { setMap: (m: naver.maps.Map | null) => void };
+      }
+    ).Circle;
+
+    radiusCircleRef.current = new CircleCtor({
+      map: mapRef.current,
+      center: new window.naver.maps.LatLng(radiusAnchor.lat, radiusAnchor.lng),
+      radius: 1000,
+      fillColor: "#2563eb",
+      fillOpacity: 0.06,
+      strokeColor: "#2563eb",
+      strokeOpacity: 0.45,
+      strokeWeight: 2,
+      zIndex: 40,
+    });
+  }, [mapScriptReady, radiusAnchor]);
+
   useEffect(() => {
     if (!mapRef.current || !selectedId) return;
     const target = businesses.find((x) => x.id === selectedId);
@@ -213,6 +399,9 @@ export const NaverMapPanel = ({
       });
     }
     if (!target) return;
+
+    aptInfoWindowRef.current?.close();
+
     const morphTo = (lat: number, lng: number) => {
       if (!mapRef.current) return;
       (mapRef.current as unknown as {
@@ -404,11 +593,20 @@ export const NaverMapPanel = ({
   return (
     <section className="flex h-full min-h-[300px] flex-1 flex-col overflow-hidden rounded-none border border-border bg-card shadow-sm ring-1 ring-foreground/5 lg:min-h-0">
       <div className="border-b border-border bg-brand-primary px-4 py-3 text-primary-foreground">
-        <h2 className="font-heading text-xs font-semibold tracking-widest uppercase">
-          관내 지도
-        </h2>
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="font-heading text-xs font-semibold tracking-widest uppercase">
+            관내 지도
+          </h2>
+          <Badge
+            variant="outline"
+            className="border-white/40 bg-white/10 text-[0.6rem] text-white"
+          >
+            실데이터
+          </Badge>
+        </div>
         <p className="mt-1 text-[0.65rem] tracking-wide text-primary-foreground/80">
-          매출 하락 업체는 붉은 마커로 표시됩니다.
+          매출 하락 업체는 붉은 마커, 국토부 단지는 🏠 마커입니다. 단지 클릭 시 안내창,
+          Shift+클릭 시 다중 선택(영업 단지 토글)입니다.
         </p>
       </div>
 
@@ -457,6 +655,15 @@ export const NaverMapPanel = ({
             style={{ backgroundColor: "#3d7a5c" }}
           />
           매출 유지·성장
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="text-[0.65rem]">🏠 국토부 단지</span>
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <Badge variant="outline" className="text-[0.55rem]">
+            가공데이터
+          </Badge>
+          색상 분류 기준은 가공 규칙을 따릅니다.
         </span>
       </div>
     </section>

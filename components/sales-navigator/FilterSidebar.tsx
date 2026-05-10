@@ -91,6 +91,44 @@ export const FilterSidebar = ({
   commercialLoading = false,
   stanSearchError = null,
 }: FilterSidebarProps) => {
+  /** 업체 데이터로 간이 개인사업자 프로파일(연령대/업력)을 추정합니다. */
+  const getMockProfile = (b: BusinessRow) => {
+    const hash = Array.from(`${b.id}${b.name}`).reduce(
+      (acc, ch) => acc + ch.charCodeAt(0),
+      0
+    );
+    const ageGroups = ["20-30대", "30-40대", "40-50대", "50-60대"];
+    const years = hash % 10;
+    return {
+      ageGroup: ageGroups[hash % ageGroups.length],
+      yearsInBusiness: years,
+    };
+  };
+
+  /** PRD 기준 우선 영업 상태 배지를 계산합니다. */
+  const getStatusBadge = (b: BusinessRow) => {
+    const profile = getMockProfile(b);
+    if (profile.yearsInBusiness < 1) {
+      return {
+        label: "오픈 특수 (1년 미만)",
+        className: "border-emerald-500/40 text-emerald-600",
+      };
+    }
+    if (profile.yearsInBusiness >= 5 || b.revenueTrend < 0) {
+      return {
+        label: "매출 방어 필요 (5년 이상)",
+        className: "border-rose-500/40 text-rose-600",
+      };
+    }
+    if (b.revenueTrend >= 0) {
+      return {
+        label: "고수익 상권 진입",
+        className: "border-amber-500/40 text-amber-600",
+      };
+    }
+    return null;
+  };
+
   /** 행정표준 지역 선택 시 입력·목록·선택 상태를 동기화합니다. */
   const handleSelectStan = (
     e: React.MouseEvent<HTMLButtonElement>,
@@ -105,19 +143,33 @@ export const FilterSidebar = ({
   return (
     <aside className="flex h-full min-h-0 flex-col overflow-hidden rounded-none border border-border bg-card shadow-sm ring-1 ring-foreground/5">
       <div className="border-b border-border bg-brand-primary px-4 py-3 text-primary-foreground">
-        <div className="flex items-center gap-2">
-          <Filter className="size-3.5 opacity-90" />
-          <h2 className="font-heading text-xs font-semibold tracking-widest uppercase">
-            필터 · 목록
-          </h2>
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Filter className="size-3.5 opacity-90" />
+            <h2 className="font-heading text-xs font-semibold tracking-widest uppercase">
+              필터 · 목록
+            </h2>
+          </div>
+          <Badge
+            variant="outline"
+            className="border-white/40 bg-white/10 text-[0.6rem] text-white"
+            title="행정동/업종 분류와 업체 기본정보는 공공 원천 응답을 사용합니다."
+          >
+            실데이터
+          </Badge>
         </div>
       </div>
 
       <div className="space-y-4 border-b border-border p-4">
         <div className="space-y-1.5">
-          <Label className="text-[0.65rem] tracking-widest uppercase text-muted-foreground">
-            행정동 (3단계)
-          </Label>
+          <div className="flex items-center justify-between gap-2">
+            <Label className="text-[0.65rem] tracking-widest uppercase text-muted-foreground">
+              행정동 (3단계)
+            </Label>
+            <Badge variant="outline" className="text-[0.55rem]" title="공공 원천 응답값입니다.">
+              실데이터
+            </Badge>
+          </div>
           <NativeSelect
             value={selectedSido}
             onChange={(e) => onSidoChange(e.target.value)}
@@ -165,9 +217,14 @@ export const FilterSidebar = ({
         </div>
 
         <div className="space-y-1.5">
-          <Label className="text-[0.65rem] tracking-widest uppercase text-muted-foreground">
-            업종 (3단계)
-          </Label>
+          <div className="flex items-center justify-between gap-2">
+            <Label className="text-[0.65rem] tracking-widest uppercase text-muted-foreground">
+              업종 (3단계)
+            </Label>
+            <Badge variant="outline" className="text-[0.55rem]" title="공공 원천 응답값입니다.">
+              실데이터
+            </Badge>
+          </div>
           <NativeSelect
             value={selectedIndLarge}
             onChange={(e) => onIndLargeChange(e.target.value)}
@@ -346,6 +403,8 @@ export const FilterSidebar = ({
                 const priority = getPriority(b);
                 const crisis = b.revenueTrend < 0;
                 const active = b.id === selectedId;
+                const profile = getMockProfile(b);
+                const statusBadge = getStatusBadge(b);
                 return (
                   <li key={b.id}>
                     <button
@@ -386,6 +445,21 @@ export const FilterSidebar = ({
                             우선
                           </Badge>
                         ) : null}
+                        {statusBadge ? (
+                          <Badge
+                            variant="outline"
+                            className={`text-[0.55rem] ${statusBadge.className}`}
+                          >
+                            {statusBadge.label}
+                          </Badge>
+                        ) : null}
+                        <Badge
+                          variant="outline"
+                          className="text-[0.55rem]"
+                          title="정제·규칙 기반으로 생성된 가공 정보입니다."
+                        >
+                          가공데이터
+                        </Badge>
                         {b.id.startsWith("ext-") ? (
                           <Badge
                             variant="outline"
@@ -397,6 +471,9 @@ export const FilterSidebar = ({
                       </div>
                       <p className="mt-0.5 truncate text-[0.65rem] text-muted-foreground">
                         {b.address || "주소 정보 없음"}
+                      </p>
+                      <p className="mt-0.5 text-[0.6rem] text-muted-foreground">
+                        대표자 연령대: {profile.ageGroup}
                       </p>
                     </button>
                   </li>
@@ -411,6 +488,9 @@ export const FilterSidebar = ({
       <p className="px-4 py-2 text-[0.6rem] leading-snug text-muted-foreground">
         매출 하락 + 공동주택 증가율 10% 초과 시 &quot;우선 영업 후보&quot;로
         분류합니다. (PRD 5.1)
+      </p>
+      <p className="border-t border-border px-4 py-2 text-[0.6rem] leading-snug text-muted-foreground">
+        상태 배지와 대표자 속성은 규칙 기반 가공 데이터입니다.
       </p>
     </aside>
   );

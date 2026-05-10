@@ -22,7 +22,7 @@ alwaysApply: true
 - TypeScript — **필수**. `tsconfig`에서 **strict 권장**.
 - Tailwind CSS — 스타일링
 - Shadcn/ui — UI 컴포넌트
-- Supabase — 인증·DB 등 백엔드 연동
+- 공공 데이터 API(NEXT_PUBLIC 필요 시 지도 등) 및 Route Handler 프록시
 - AI SDK — 모델 연동
 - ESLint — Next.js·TypeScript 권장 규칙 준수
 
