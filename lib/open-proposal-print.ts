@@ -130,6 +130,68 @@ const buildTemplateContent = (
   };
 };
 
+/**
+ * 팝업 차단(Vercel 배포·모바일 Safari 등) 없이 인쇄 대화상자를 띄웁니다.
+ * @returns 성공 시 true
+ */
+const printHtmlViaHiddenIframe = (html: string): boolean => {
+  if (typeof document === "undefined") return false;
+  const iframe = document.createElement("iframe");
+  iframe.setAttribute("title", "제안서 인쇄 미리보기");
+  iframe.setAttribute("aria-hidden", "true");
+  iframe.style.cssText =
+    "position:fixed;left:0;top:0;width:1px;height:1px;border:0;opacity:0;pointer-events:none;";
+  document.body.appendChild(iframe);
+  const doc = iframe.contentDocument;
+  const win = iframe.contentWindow;
+  if (!doc || !win) {
+    iframe.remove();
+    return false;
+  }
+  doc.open();
+  doc.write(html);
+  doc.close();
+  const cleanup = () => {
+    try {
+      iframe.remove();
+    } catch {
+      /* noop */
+    }
+  };
+  window.setTimeout(() => {
+    try {
+      win.focus();
+      win.print();
+    } finally {
+      window.setTimeout(cleanup, 800);
+    }
+  }, 150);
+  return true;
+};
+
+/** 보조: 새 탭에서 미리보기 후 인쇄(팝업 허용 시). */
+const printHtmlViaPopup = (html: string): boolean => {
+  const w = window.open("about:blank", "_blank", "noopener,noreferrer");
+  if (!w) return false;
+  try {
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
+    w.focus();
+    window.setTimeout(() => {
+      w.print();
+    }, 0);
+    return true;
+  } catch {
+    try {
+      w.close();
+    } catch {
+      /* noop */
+    }
+    return false;
+  }
+};
+
 /** 제안서 인쇄/PDF 출력 문서를 PRD3 구조로 생성합니다. */
 export const openProposalPrint = (
   b: BusinessRow,
@@ -174,12 +236,9 @@ export const openProposalPrint = (
        <tr><td>특별 감액(${extras.postalQuote.discountPct}%)</td><td style="text-align:right">−${(extras.postalQuote.baseTotalWon - extras.postalQuote.finalTotalWon).toLocaleString("ko-KR")}원</td></tr>
        <tr><td><strong>최종 예상</strong></td><td style="text-align:right"><strong>${extras.postalQuote.finalTotalWon.toLocaleString("ko-KR")}원</strong></td></tr>`
     : "";
-  const w = window.open("", "_blank", "width=800,height=1100");
-  if (!w) {
-    return;
-  }
+
   const title = `생활정보홍보우편 맞춤형 제안서 — ${b.name}`;
-  w.document.write(`<!DOCTYPE html>
+  const fullHtml = `<!DOCTYPE html>
 <html lang="ko">
 <head>
   <meta charset="utf-8" />
@@ -282,8 +341,12 @@ export const openProposalPrint = (
     </footer>
   </main>
 </body>
-</html>`);
-  w.document.close();
-  w.focus();
-  w.print();
+</html>`;
+
+  if (printHtmlViaHiddenIframe(fullHtml)) return;
+  if (printHtmlViaPopup(fullHtml)) return;
+
+  window.alert(
+    "인쇄 창을 열 수 없습니다. 브라우저 설정에서 이 사이트의 팝업을 허용한 뒤 다시 시도하거나, 다른 브라우저에서 열어 주세요."
+  );
 };
