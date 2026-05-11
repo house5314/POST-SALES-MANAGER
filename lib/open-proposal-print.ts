@@ -1,9 +1,12 @@
 import type { PostalQuote } from "@/lib/postal-calc";
 import type { BusinessRow, MarketStatRow } from "@/lib/sales/types";
+import { buildSbizIframeSrc } from "@/lib/sbiz-iframe-urls";
 
 type ProposalPrintExtras = {
   postalQuote?: PostalQuote;
   aptTargets?: { name: string; households: number }[];
+  /** PRD5 부록 iframe용 소상공인365 certKey(NEXT_PUBLIC_SBIZ_CERT_KEY). */
+  sbizCertKey?: string;
 };
 
 type TemplateType = "A" | "B" | "C";
@@ -165,7 +168,7 @@ const printHtmlViaHiddenIframe = (html: string): boolean => {
     } finally {
       window.setTimeout(cleanup, 800);
     }
-  }, 150);
+  }, 1500);
   return true;
 };
 
@@ -180,7 +183,7 @@ const printHtmlViaPopup = (html: string): boolean => {
     w.focus();
     window.setTimeout(() => {
       w.print();
-    }, 0);
+    }, 1500);
     return true;
   } catch {
     try {
@@ -237,6 +240,18 @@ export const openProposalPrint = (
        <tr><td><strong>최종 예상</strong></td><td style="text-align:right"><strong>${extras.postalQuote.finalTotalWon.toLocaleString("ko-KR")}원</strong></td></tr>`
     : "";
 
+  const sbizKey = extras?.sbizCertKey?.trim() ?? "";
+  const sbizAppendixSrc = sbizKey ? buildSbizIframeSrc("detail", sbizKey) : "";
+  const sbizAppendixSection = sbizAppendixSrc
+    ? `<section class="sbiz-appendix" aria-label="소상공인365 상세분석 부록">
+      <h2>부록: 소상공인365 데이터 기반 정밀 상권 상세분석 리포트</h2>
+      <p class="sbiz-appendix-note">아래는 소상공인365 빅데이터 포털 상세분석 화면입니다. 인쇄/PDF 저장 시 브라우저가 외부 콘텐츠를 함께 렌더링합니다.</p>
+      <div class="sbiz-appendix-frame-wrap">
+        <iframe src="${escapeHtml(sbizAppendixSrc)}" title="소상공인365 상세분석" class="sbiz-appendix-iframe"></iframe>
+      </div>
+    </section>`
+    : "";
+
   const title = `생활정보홍보우편 맞춤형 제안서 — ${b.name}`;
   const fullHtml = `<!DOCTYPE html>
 <html lang="ko">
@@ -264,9 +279,45 @@ export const openProposalPrint = (
     .badge { display: inline-block; padding: 3px 8px; border-radius: 999px; background: #eff6ff; color: #1d4ed8; font-size: 10px; margin-left: 6px; }
     .muted { color: #64748b; font-size: 11px; }
     @page { size: A4; margin: 10mm; }
+    .sbiz-appendix {
+      break-before: page;
+      page-break-before: always;
+      padding-top: 12mm;
+    }
+    .sbiz-appendix h2 {
+      margin: 0 0 8px;
+      font-size: 15px;
+      color: #1e3a5f;
+    }
+    .sbiz-appendix-note {
+      margin: 0 0 10px;
+      font-size: 11px;
+      color: #64748b;
+    }
+    .sbiz-appendix-frame-wrap {
+      width: 800px;
+      max-width: 100%;
+      margin: 0 auto;
+    }
+    .sbiz-appendix-iframe {
+      width: 800px;
+      height: 1100px;
+      max-width: 100%;
+      border: 0;
+      border-radius: 6px;
+      display: block;
+      background: #f1f5f9;
+    }
     @media print {
       body { background: #fff; }
       .page { margin: 0; width: auto; min-height: auto; padding: 0; }
+      .sbiz-appendix-iframe {
+        width: 100% !important;
+        max-width: 190mm !important;
+        height: 270mm !important;
+        min-height: 270mm !important;
+        page-break-inside: avoid;
+      }
     }
   </style>
 </head>
@@ -340,6 +391,7 @@ export const openProposalPrint = (
       <p class="muted" style="margin:8px 0 0;">본 문서는 우체국 생활정보홍보우편 B2B 영업을 위한 맞춤형 컨설팅 데모 리포트입니다.</p>
     </footer>
   </main>
+  ${sbizAppendixSection}
 </body>
 </html>`;
 

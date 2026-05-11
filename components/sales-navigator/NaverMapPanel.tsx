@@ -26,12 +26,20 @@ type NaverMapPanelProps = {
   onAptSelect?: (id: string, opts: { shiftKey: boolean }) => void;
   /** 반경 1km 원 중심(선택된 상가 좌표). */
   radiusAnchor?: { lat: number; lng: number } | null;
+  /**
+   * 선택 업체로 지도 morph 시 줌(네이버 NCP).
+   * 상가 조회 후 자동 선택은 부모에서 14(약 300m), 목록·지도 직접 선택은 약 50m(18 전후).
+   */
+  businessMorphZoom?: number;
 };
 
 /** 한국 권역 기준(WGS84) 위경도 범위인지 확인합니다. */
 const isValidKoreaCoord = (lat: number, lng: number) => {
   return lat >= 33 && lat <= 38 && lng >= 126 && lng <= 132;
 };
+
+/** 행정동(3단계) 지오코딩 후 이동 축척(약 300m, 줌 14는 약 500m 체감에 가까워 한 단계 확대). */
+const ZOOM_REGION_OVERVIEW = 16;
 
 /** 임의 좌표값을 숫자로 정규화하고 유효성까지 함께 판정합니다. */
 const toValidCoordFromPair = (
@@ -71,6 +79,7 @@ export const NaverMapPanel = ({
   selectedAptIdList = [],
   onAptSelect,
   radiusAnchor = null,
+  businessMorphZoom = 18,
 }: NaverMapPanelProps) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<naver.maps.Map | null>(null);
@@ -93,6 +102,15 @@ export const NaverMapPanel = ({
     Record<string, { lat: number; lng: number }>
   >({});
   const correctedCoordsRef = useRef<Record<string, { lat: number; lng: number }>>({});
+  const selectedIdRef = useRef<string | null>(null);
+  const businessesRef = useRef<BusinessRow[]>([]);
+  const selectedDongAddressRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    selectedIdRef.current = selectedId ?? null;
+    businessesRef.current = businesses;
+    selectedDongAddressRef.current = selectedDongAddress ?? null;
+  }, [selectedId, businesses, selectedDongAddress]);
 
   useEffect(() => {
     correctedCoordsRef.current = correctedCoords;
@@ -406,7 +424,7 @@ export const NaverMapPanel = ({
       if (!mapRef.current) return;
       (mapRef.current as unknown as {
         morph: (p: naver.maps.LatLng, z: number) => void;
-      }).morph(new window.naver.maps.LatLng(lat, lng), 19);
+      }).morph(new window.naver.maps.LatLng(lat, lng), businessMorphZoom);
       // 우측 사이드바 시각 오프셋 보정(핀을 화면 체감 중앙으로).
       (
         mapRef.current as unknown as {
@@ -543,11 +561,12 @@ export const NaverMapPanel = ({
         fallbackToPublicCoord();
       });
     });
-  }, [selectedId, businesses]);
+  }, [selectedId, businesses, businessMorphZoom]);
 
   /** 계층형 동 선택 시 지오코딩 좌표로 지도를 자동 이동합니다. */
   useEffect(() => {
     if (!mapRef.current || !mapScriptReady || !selectedDongAddress) return;
+    const requestedSnapshot = selectedDongAddress;
     const geocoder = (window.naver.maps as unknown as {
       Service?: {
         geocode: (
@@ -558,8 +577,9 @@ export const NaverMapPanel = ({
       };
     }).Service;
     if (!geocoder) return;
-    const query = sanitizeGeocodeQuery(selectedDongAddress);
+    const query = sanitizeGeocodeQuery(requestedSnapshot);
     geocoder.geocode({ query }, (status, response) => {
+      if (selectedDongAddressRef.current !== requestedSnapshot) return;
       const statusOk = geocoder.Status?.OK;
       if (status === "ERROR" || status === geocoder.Status?.ERROR) return;
       if (statusOk ? status !== statusOk : status !== "OK") return;
@@ -570,12 +590,19 @@ export const NaverMapPanel = ({
       if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
       if (!isValidKoreaCoord(lat, lng)) return;
       if (!mapRef.current) return;
+      if (selectedDongAddressRef.current !== requestedSnapshot) return;
+      const sid = selectedIdRef.current;
+      const rows = businessesRef.current;
+      if (sid && rows.some((b) => b.id === sid)) {
+        drawRegionBoundary(requestedSnapshot);
+        return;
+      }
       (
         mapRef.current as unknown as {
           morph: (p: naver.maps.LatLng, z: number) => void;
         }
-      ).morph(new window.naver.maps.LatLng(lat, lng), 15);
-      drawRegionBoundary(selectedDongAddress);
+      ).morph(new window.naver.maps.LatLng(lat, lng), ZOOM_REGION_OVERVIEW);
+      drawRegionBoundary(requestedSnapshot);
     });
   }, [drawRegionBoundary, mapScriptReady, selectedDongAddress]);
 

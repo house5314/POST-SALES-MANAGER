@@ -12,7 +12,9 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { AptListSelector } from "@/components/sales-navigator/AptListSelector";
+import { Sbiz365IframeDialog } from "@/components/sales-navigator/Sbiz365IframeDialog";
 import { openProposalPrint } from "@/lib/open-proposal-print";
+import { getSbizCertKeyPublic } from "@/lib/sbiz-iframe-urls";
 import type { MolitAptComplex } from "@/lib/molit/types";
 import type { PostalQuote } from "@/lib/postal-calc";
 import type { BusinessRow, MarketStatRow } from "@/lib/sales/types";
@@ -405,6 +407,9 @@ export const InsightCenterPanel = ({
           </p>
         </CardContent>
       </Card>
+
+      <Sbiz365IframeDialog />
+
       <div className="flex flex-wrap gap-2">
         <Button
           type="button"
@@ -415,6 +420,7 @@ export const InsightCenterPanel = ({
               aptTargets: apartments
                 .filter((a) => selectedAptIds.has(a.id))
                 .map((a) => ({ name: a.name, households: a.households })),
+              sbizCertKey: getSbizCertKeyPublic(),
             })
           }
         >

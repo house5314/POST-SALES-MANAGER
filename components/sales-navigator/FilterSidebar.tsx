@@ -1,10 +1,9 @@
 "use client";
 
-import { Building2, Filter, MapPin, Radar } from "lucide-react";
+import { Building2, Filter } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   NativeSelect,
@@ -43,16 +42,6 @@ type FilterSidebarProps = {
   selectedId: string | null;
   onSelect: (id: string) => void;
   getPriority: (b: BusinessRow) => boolean;
-  stanQuery?: string;
-  onStanQueryChange?: (v: string) => void;
-  stanHits?: { code: string; label: string }[];
-  selectedStan?: { code: string; label: string } | null;
-  onSelectStan?: (v: { code: string; label: string } | null) => void;
-  onStanHitsClear?: () => void;
-  onFetchCommercialStores?: () => void;
-  commercialLoading?: boolean;
-  /** 행정표준 검색 API 오류 메시지 */
-  stanSearchError?: string | null;
 };
 
 /** 필터·업체 리스트(PRD 우측 패널). */
@@ -81,15 +70,6 @@ export const FilterSidebar = ({
   selectedId,
   onSelect,
   getPriority,
-  stanQuery = "",
-  onStanQueryChange,
-  stanHits = [],
-  selectedStan,
-  onSelectStan,
-  onStanHitsClear,
-  onFetchCommercialStores,
-  commercialLoading = false,
-  stanSearchError = null,
 }: FilterSidebarProps) => {
   /** 업체 데이터로 간이 개인사업자 프로파일(연령대/업력)을 추정합니다. */
   const getMockProfile = (b: BusinessRow) => {
@@ -127,17 +107,6 @@ export const FilterSidebar = ({
       };
     }
     return null;
-  };
-
-  /** 행정표준 지역 선택 시 입력·목록·선택 상태를 동기화합니다. */
-  const handleSelectStan = (
-    e: React.MouseEvent<HTMLButtonElement>,
-    hit: { code: string; label: string }
-  ) => {
-    e.preventDefault();
-    onSelectStan?.({ code: hit.code, label: hit.label });
-    onStanQueryChange?.(hit.label);
-    onStanHitsClear?.();
   };
 
   return (
@@ -312,83 +281,9 @@ export const FilterSidebar = ({
             </Button>
           </div>
         </div>
-
-        {onStanQueryChange && onSelectStan ? (
-          <div className="space-y-2 border-t border-border pt-4">
-            <div className="flex items-center gap-2 text-brand-primary">
-              <Radar className="size-3.5" />
-              <span className="text-[0.65rem] font-semibold tracking-widest uppercase">
-                공공 API · 행정표준 검색
-              </span>
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-[0.65rem] text-muted-foreground">
-                지역명(2자 이상)
-              </Label>
-              <div className="relative">
-                <Input
-                  value={stanQuery}
-                  onChange={(e) => onStanQueryChange(e.target.value)}
-                  placeholder="예: 범어1동, 강남"
-                  className="h-9 text-xs"
-                />
-                {stanHits.length > 0 ? (
-                  <ul className="absolute z-50 mt-1 max-h-60 w-full overflow-y-auto border bg-white shadow-md">
-                    {stanHits.map((h) => (
-                      <li key={h.code}>
-                        <button
-                          type="button"
-                          onMouseDown={(e) => handleSelectStan(e, h)}
-                          onDoubleClick={(e) => handleSelectStan(e, h)}
-                          className="flex w-full items-start gap-2 px-2 py-1.5 text-left text-xs hover:bg-muted"
-                        >
-                          <MapPin className="mt-0.5 size-3 shrink-0 text-brand-accent" />
-                          <span>
-                            <span className="font-mono text-[0.6rem] text-muted-foreground">
-                              {h.code}
-                            </span>
-                            <br />
-                            {h.label}
-                          </span>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
-              </div>
-              {stanSearchError ? (
-                <p className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-[0.65rem] text-amber-900 dark:text-amber-100">
-                  {stanSearchError}
-                </p>
-              ) : null}
-              {selectedStan ? (
-                <p className="text-[0.65rem] text-brand-positive">
-                  선택됨: {selectedStan.label}
-                </p>
-              ) : null}
-            </div>
-            {onFetchCommercialStores ? (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="w-full border-brand-primary text-brand-primary hover:bg-brand-primary/10"
-                disabled={!selectedStan?.code || commercialLoading}
-                onClick={onFetchCommercialStores}
-              >
-                {commercialLoading ? "불러오는 중…" : "상가업소 불러오기"}
-              </Button>
-            ) : null}
-            <p className="text-[0.6rem] leading-relaxed text-muted-foreground">
-              소상공인 상가 API(storeListInDong)로 선택 행정동의 점포를
-              지도·목록에 합칩니다. 인증키·API 신청은 공공데이터포털에서
-              확인하세요.
-            </p>
-          </div>
-        ) : null}
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col px-2 pb-2 pt-3">
+      <div className="flex min-h-0 flex-1 flex-col px-2 pb-2 pt-2">
         <p className="mb-2 px-2 text-[0.65rem] font-medium uppercase tracking-wider text-muted-foreground">
           검색 결과 · {businesses.length}건
         </p>

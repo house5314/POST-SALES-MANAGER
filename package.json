@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "verify:public-data": "node scripts/verify-public-data-keys.mjs"
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.67",

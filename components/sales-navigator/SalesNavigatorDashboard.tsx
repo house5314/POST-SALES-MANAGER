@@ -22,6 +22,11 @@ import type { BusinessRow, MarketStatRow } from "@/lib/sales/types";
 
 type IndsLarge = { indsLclsCd: string; indsLclsNm: string };
 type Option = { value: string; label: string };
+
+/** 상가 목록 조회 후 첫 업체 자동 포커스 시 축척(약 300m 수준, 네이버 NCP 줌 14 전후). */
+const ZOOM_AFTER_AUTO_FIRST_STORE = 14;
+/** 목록·지도에서 업체를 직접 선택했을 때 줌(약 50m 수준, 19는 과도 확대). */
+const ZOOM_AFTER_MANUAL_BUSINESS_SELECT = 18;
 type EvlInfo = {
   gender: "남성" | "여성";
   ageGroup: string;
@@ -319,16 +324,6 @@ export const SalesNavigatorDashboard = () => {
   const [dongOptions, setDongOptions] = useState<Option[]>([]);
   const [indMediumOptions, setIndMediumOptions] = useState<Option[]>([]);
   const [indSmallOptions, setIndSmallOptions] = useState<Option[]>([]);
-  const [stanQuery, setStanQuery] = useState("");
-  const [stanHits, setStanHits] = useState<{ code: string; label: string }[]>(
-    []
-  );
-  const [selectedStan, setSelectedStan] = useState<{
-    code: string;
-    label: string;
-  } | null>(null);
-  const [commercialLoading, setCommercialLoading] = useState(false);
-  const [stanSearchError, setStanSearchError] = useState<string | null>(null);
 
   useEffect(() => {
     void (async () => {
@@ -350,51 +345,11 @@ export const SalesNavigatorDashboard = () => {
     })();
   }, []);
 
-  useEffect(() => {
-    const t = setTimeout(() => {
-      void (async () => {
-        if (selectedStan && stanQuery.trim() === selectedStan.label.trim()) {
-          setStanHits([]);
-          setStanSearchError(null);
-          return;
-        }
-        if (stanQuery.length < 2) {
-          setStanHits([]);
-          setStanSearchError(null);
-          return;
-        }
-        try {
-          const res = await fetch(
-            `/api/regions/search?q=${encodeURIComponent(stanQuery)}`
-          );
-          const data = (await res.json()) as {
-            ok: boolean;
-            message?: string;
-            results?: { code: string; label: string }[];
-          };
-          if (!data.ok) {
-            const msg =
-              data.message ?? "행정표준 지역 검색을 실행하지 못했습니다.";
-            console.error("[공공 API · 행정표준 검색]", msg);
-            setStanSearchError(msg);
-            setStanHits([]);
-            return;
-          }
-          setStanSearchError(null);
-          setStanHits(data.results ?? []);
-        } catch {
-          setStanSearchError("행정표준 지역 검색 중 네트워크 오류가 났습니다.");
-          setStanHits([]);
-        }
-      })();
-    }, 400);
-    return () => clearTimeout(t);
-  }, [selectedStan, stanQuery]);
-
   const allRows = overlayStores;
 
   const [revenueFilter, setRevenueFilter] = useState<RevenueFilter>("all");
   const [pickedId, setPickedId] = useState<string | null>(null);
+  const [businessMorphZoom, setBusinessMorphZoom] = useState(ZOOM_AFTER_MANUAL_BUSINESS_SELECT);
   const [aptRows, setAptRows] = useState<MolitAptComplex[]>([]);
   const [aptLoading, setAptLoading] = useState(false);
   const [aptError, setAptError] = useState<string | null>(null);
@@ -644,8 +599,9 @@ export const SalesNavigatorDashboard = () => {
   );
 
   const handleSelect = useCallback((id: string) => {
+    setBusinessMorphZoom(ZOOM_AFTER_MANUAL_BUSINESS_SELECT);
     setPickedId(id);
-  }, [setPickedId]);
+  }, []);
 
   /** 지도에서 단지 마커 클릭 시 선택을 갱신합니다(Shift면 다중 토글). */
   const handleAptMapSelect = useCallback(
@@ -961,9 +917,8 @@ export const SalesNavigatorDashboard = () => {
   );
 
   const handleFetchCommercialStores = useCallback(async () => {
-    const effectiveDong = selectedDong || selectedStan?.code || "";
+    const effectiveDong = selectedDong.trim();
     if (!effectiveDong) return;
-    setCommercialLoading(true);
     try {
       const q = new URLSearchParams();
       q.set("dong", effectiveDong);
@@ -992,6 +947,7 @@ export const SalesNavigatorDashboard = () => {
           !(s.lat === 0 && s.lng === 0)
       );
       if (firstWithPoint) {
+        setBusinessMorphZoom(ZOOM_AFTER_AUTO_FIRST_STORE);
         setPickedId(firstWithPoint.id);
       }
       setApiError(null);
@@ -999,8 +955,6 @@ export const SalesNavigatorDashboard = () => {
       setApiError(
         e instanceof Error ? e.message : "공공 상가 조회 중 오류가 났습니다."
       );
-    } finally {
-      setCommercialLoading(false);
     }
   }, [
     indsLclsFilter,
@@ -1008,12 +962,11 @@ export const SalesNavigatorDashboard = () => {
     selectedIndLarge,
     selectedIndMedium,
     selectedIndSmall,
-    selectedStan?.code,
   ]);
 
   /** 지역/업종 필터가 바뀌면 상가 데이터를 자동으로 다시 조회합니다. */
   useEffect(() => {
-    if (!selectedDong && !selectedStan?.code) return;
+    if (!selectedDong.trim()) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void handleFetchCommercialStores();
   }, [
@@ -1022,7 +975,6 @@ export const SalesNavigatorDashboard = () => {
     selectedIndLarge,
     selectedIndMedium,
     selectedIndSmall,
-    selectedStan?.code,
   ]);
 
   return (
@@ -1066,6 +1018,7 @@ export const SalesNavigatorDashboard = () => {
               selectedAptIdList={[...selectedAptIds]}
               onAptSelect={handleAptMapSelect}
               radiusAnchor={radiusAnchor}
+              businessMorphZoom={businessMorphZoom}
             />
           </div>
           <div className="min-h-0 lg:w-[20%]">
@@ -1092,39 +1045,30 @@ export const SalesNavigatorDashboard = () => {
           </div>
           <div className="min-h-0 lg:w-[20%]">
             <FilterSidebar
-            sidoOptions={sidoOptions}
-            sigunguOptions={sigunguOptions}
-            dongOptions={dongOptions}
-            selectedSido={selectedSido}
-            selectedSigungu={selectedSigungu}
-            selectedDong={selectedDong}
-            onSidoChange={handleSidoChange}
-            onSigunguChange={handleSigunguChange}
-            onDongChange={setSelectedDong}
-            indLargeOptions={indLargeOptions}
-            indMediumOptions={indMediumOptions}
-            indSmallOptions={indSmallOptions}
-            selectedIndLarge={selectedIndLarge}
-            selectedIndMedium={selectedIndMedium}
-            selectedIndSmall={selectedIndSmall}
-            onIndLargeChange={handleIndLargeChange}
-            onIndMediumChange={handleIndMediumChange}
-            onIndSmallChange={setSelectedIndSmall}
-            revenueFilter={revenueFilter}
-            onRevenueChange={setRevenueFilter}
-            businesses={filtered}
-            selectedId={activeId}
-            onSelect={handleSelect}
-            getPriority={getPriority}
-            stanQuery={stanQuery}
-            onStanQueryChange={setStanQuery}
-            stanHits={stanHits}
-            selectedStan={selectedStan}
-            onSelectStan={setSelectedStan}
-            onStanHitsClear={() => setStanHits([])}
-            onFetchCommercialStores={handleFetchCommercialStores}
-            commercialLoading={commercialLoading}
-            stanSearchError={stanSearchError}
+              sidoOptions={sidoOptions}
+              sigunguOptions={sigunguOptions}
+              dongOptions={dongOptions}
+              selectedSido={selectedSido}
+              selectedSigungu={selectedSigungu}
+              selectedDong={selectedDong}
+              onSidoChange={handleSidoChange}
+              onSigunguChange={handleSigunguChange}
+              onDongChange={setSelectedDong}
+              indLargeOptions={indLargeOptions}
+              indMediumOptions={indMediumOptions}
+              indSmallOptions={indSmallOptions}
+              selectedIndLarge={selectedIndLarge}
+              selectedIndMedium={selectedIndMedium}
+              selectedIndSmall={selectedIndSmall}
+              onIndLargeChange={handleIndLargeChange}
+              onIndMediumChange={handleIndMediumChange}
+              onIndSmallChange={setSelectedIndSmall}
+              revenueFilter={revenueFilter}
+              onRevenueChange={setRevenueFilter}
+              businesses={filtered}
+              selectedId={activeId}
+              onSelect={handleSelect}
+              getPriority={getPriority}
             />
           </div>
         </div>
