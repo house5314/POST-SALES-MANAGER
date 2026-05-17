@@ -9,6 +9,11 @@ export type MarketStatRow = {
   peakTime: string;
   floatingPop: number;
   dongHouseholds: number;
+  /**
+   * 세대·유동인구 등 지표의 출처(상담 초안·상세 패널에 그대로 표기).
+   * `/api/commercial/market-stats` 응답에서 채웁니다.
+   */
+  metricsSourceLabel: string;
 };
 
 /** 업체 행 출처(공모전 데모: 공공 상가 API 오버레이만 사용). */
@@ -34,4 +39,8 @@ export type BusinessRow = {
   revenueTrend: number;
   /** 상가 API 대분류 코드(있을 때만) */
   indsLclsCd?: string | null;
+  /** 상가 API 중분류 코드(필터·표시는 코드 기준으로 통일) */
+  indsMclsCd?: string | null;
+  /** 상가 API 소분류 코드 */
+  indsSclsCd?: string | null;
 };

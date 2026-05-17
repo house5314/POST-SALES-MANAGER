@@ -4,9 +4,11 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "prebuild": "node scripts/validate-env.mjs",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint",
+    "lint": "eslint . --max-warnings 0",
+    "validate:env": "node scripts/validate-env.mjs",
     "verify:public-data": "node scripts/verify-public-data-keys.mjs"
   },
   "dependencies": {

@@ -1,0 +1,22 @@
+# PoC 환경 검증 스크립트 스모크(CI에 .env.local 이 없어도 통과)
+name: validate-env
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+      - run: npm ci
+      - name: validate-env (CI · .env 없음 허용)
+        run: node scripts/validate-env.mjs --no-network
+        env:
+          CI: "true"

@@ -3,11 +3,14 @@
 import Script from "next/script";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { DemoMapFallback } from "@/components/sales-navigator/DemoMapFallback";
 import { Badge } from "@/components/ui/badge";
 import type { MolitAptComplex } from "@/lib/molit/types";
 import type { BusinessRow } from "@/lib/sales/types";
 
 type NaverMapPanelProps = {
+  /** `?demo=1` 등 — NCP 키가 없을 때 정적 미니맵으로 대체합니다. */
+  demoMode?: boolean;
   /** 네이버 지도 Application Client ID */
   clientId: string | undefined;
   businesses: BusinessRow[];
@@ -28,7 +31,7 @@ type NaverMapPanelProps = {
   radiusAnchor?: { lat: number; lng: number } | null;
   /**
    * 선택 업체로 지도 morph 시 줌(네이버 NCP).
-   * 상가 조회 후 자동 선택은 부모에서 14(약 300m), 목록·지도 직접 선택은 약 50m(18 전후).
+   * 부모 `businessMorphZoom`: 상가 조회 후 첫 업·행정동 이동은 14(약 300m), 목록·지도 직접 선택은 18(약 30m).
    */
   businessMorphZoom?: number;
 };
@@ -38,8 +41,8 @@ const isValidKoreaCoord = (lat: number, lng: number) => {
   return lat >= 33 && lat <= 38 && lng >= 126 && lng <= 132;
 };
 
-/** 행정동(3단계) 지오코딩 후 이동 축척(약 300m, 줌 14는 약 500m 체감에 가까워 한 단계 확대). */
-const ZOOM_REGION_OVERVIEW = 16;
+/** 행정동(시·도·시군구·읍면동) 3단계 선택 후 지오코딩 이동 시 축척 — 자동 상가 포커스와 동일하게 약 300m(줌 14). */
+const ZOOM_REGION_OVERVIEW = 14;
 
 /** 임의 좌표값을 숫자로 정규화하고 유효성까지 함께 판정합니다. */
 const toValidCoordFromPair = (
@@ -70,6 +73,7 @@ const sanitizeGeocodeQuery = (address: string) => {
 
 /** 관내 업체 마커가 있는 네이버 지도 패널(PRD 좌측). */
 export const NaverMapPanel = ({
+  demoMode = false,
   clientId,
   businesses,
   selectedId,
@@ -105,12 +109,19 @@ export const NaverMapPanel = ({
   const selectedIdRef = useRef<string | null>(null);
   const businessesRef = useRef<BusinessRow[]>([]);
   const selectedDongAddressRef = useRef<string | null>(null);
+  /** props의 줌을 비동기 지오코드 콜백에서도 최신값으로 쓰기 위한 ref(이전 18로 늦게 morph 되는 현상 방지). */
+  const businessMorphZoomRef = useRef(businessMorphZoom);
+  /** 행정동 지오코딩 요청 세대 — 주소 스냅샷이 바뀌면 이전 콜백의 morph 를 무시합니다. */
+  const dongGeocodeGenerationRef = useRef(0);
+  /** 선택 업체 포커스(지오코드) 요청 세대 — 선택이 바뀌면 이전 콜백의 morph 를 무시합니다. */
+  const storeFocusGenerationRef = useRef(0);
 
   useEffect(() => {
     selectedIdRef.current = selectedId ?? null;
     businessesRef.current = businesses;
     selectedDongAddressRef.current = selectedDongAddress ?? null;
-  }, [selectedId, businesses, selectedDongAddress]);
+    businessMorphZoomRef.current = businessMorphZoom;
+  }, [selectedId, businesses, selectedDongAddress, businessMorphZoom]);
 
   useEffect(() => {
     correctedCoordsRef.current = correctedCoords;
@@ -136,8 +147,8 @@ export const NaverMapPanel = ({
 
   /** 업체 상태에 맞는 핀(원형+화살표 꼬리) 마커 HTML을 생성합니다. */
   const buildMarkerHtml = (b: BusinessRow, isSelected: boolean) => {
-    const crisis = b.revenueTrend < 0;
-    const bg = crisis ? "#dc2626" : "#3d7a5c";
+    const bg =
+      b.revenueTrend < 0 ? "#dc2626" : b.revenueTrend > 0 ? "#3d7a5c" : "#78716c";
     const size = isSelected ? 18 : 14;
     const ring = isSelected ? "box-shadow:0 0 0 3px rgba(30,58,95,0.35);" : "";
     const tailSize = isSelected ? 7 : 6;
@@ -418,13 +429,20 @@ export const NaverMapPanel = ({
     }
     if (!target) return;
 
+    const myGen = ++storeFocusGenerationRef.current;
+
     aptInfoWindowRef.current?.close();
 
     const morphTo = (lat: number, lng: number) => {
+      if (storeFocusGenerationRef.current !== myGen) return;
+      if (selectedIdRef.current !== target.id) return;
       if (!mapRef.current) return;
       (mapRef.current as unknown as {
         morph: (p: naver.maps.LatLng, z: number) => void;
-      }).morph(new window.naver.maps.LatLng(lat, lng), businessMorphZoom);
+      }).morph(
+        new window.naver.maps.LatLng(lat, lng),
+        businessMorphZoomRef.current
+      );
       // 우측 사이드바 시각 오프셋 보정(핀을 화면 체감 중앙으로).
       (
         mapRef.current as unknown as {
@@ -487,6 +505,8 @@ export const NaverMapPanel = ({
     }).Service;
 
     const applyGeocodedPosition = (lat: number, lng: number) => {
+      if (storeFocusGenerationRef.current !== myGen) return;
+      if (selectedIdRef.current !== target.id) return;
       const selectedMarker = markerByIdRef.current.get(target.id);
       if (selectedMarker) {
         (
@@ -499,13 +519,17 @@ export const NaverMapPanel = ({
     };
 
     const fallbackToPublicCoord = () => {
+      if (storeFocusGenerationRef.current !== myGen) return;
+      if (selectedIdRef.current !== target.id) return;
       const corrected = correctedCoordsRef.current[target.id];
       const coord = toValidCoordFromPair(
         corrected?.lat ?? target.lat,
         corrected?.lng ?? target.lng
       );
       if (!coord) {
-        console.error("해당 업체의 좌표 정보가 없습니다.");
+        if (process.env.NODE_ENV === "development") {
+          console.warn("[지도] 해당 업체의 좌표 정보가 없습니다.", target.id);
+        }
         return;
       }
       morphTo(coord.lat, coord.lng);
@@ -520,6 +544,7 @@ export const NaverMapPanel = ({
         return;
       }
       geocoder.geocode({ query }, (status, response) => {
+        if (storeFocusGenerationRef.current !== myGen) return;
         const statusOk = geocoder.Status?.OK;
         const isError = status === "ERROR" || status === geocoder.Status?.ERROR;
         const result = response as {
@@ -546,6 +571,8 @@ export const NaverMapPanel = ({
           onFail();
           return;
         }
+        if (storeFocusGenerationRef.current !== myGen) return;
+        if (selectedIdRef.current !== target.id) return;
         setCorrectedCoords((prev) => ({
           ...prev,
           [target.id]: { lat: latGeo, lng: lngGeo },
@@ -567,6 +594,7 @@ export const NaverMapPanel = ({
   useEffect(() => {
     if (!mapRef.current || !mapScriptReady || !selectedDongAddress) return;
     const requestedSnapshot = selectedDongAddress;
+    const myDongGen = ++dongGeocodeGenerationRef.current;
     const geocoder = (window.naver.maps as unknown as {
       Service?: {
         geocode: (
@@ -579,6 +607,7 @@ export const NaverMapPanel = ({
     if (!geocoder) return;
     const query = sanitizeGeocodeQuery(requestedSnapshot);
     geocoder.geocode({ query }, (status, response) => {
+      if (dongGeocodeGenerationRef.current !== myDongGen) return;
       if (selectedDongAddressRef.current !== requestedSnapshot) return;
       const statusOk = geocoder.Status?.OK;
       if (status === "ERROR" || status === geocoder.Status?.ERROR) return;
@@ -591,6 +620,7 @@ export const NaverMapPanel = ({
       if (!isValidKoreaCoord(lat, lng)) return;
       if (!mapRef.current) return;
       if (selectedDongAddressRef.current !== requestedSnapshot) return;
+      if (dongGeocodeGenerationRef.current !== myDongGen) return;
       const sid = selectedIdRef.current;
       const rows = businessesRef.current;
       if (sid && rows.some((b) => b.id === sid)) {
@@ -606,7 +636,7 @@ export const NaverMapPanel = ({
     });
   }, [drawRegionBoundary, mapScriptReady, selectedDongAddress]);
 
-  /** 데이터·레이아웃 변경 후 지도 캔버스 크기를 다시 맞춥니다(절반만 그려지는 현상 완화). */
+  /** 지도 스크립트 준비 직후 한 번 캔버스 크기를 맞춥니다(레이아웃 깨짐 완화). */
   useEffect(() => {
     if (!mapRef.current || !mapScriptReady) return;
     const id = requestAnimationFrame(() => {
@@ -615,26 +645,34 @@ export const NaverMapPanel = ({
       }
     });
     return () => cancelAnimationFrame(id);
-  }, [businesses.length, mapScriptReady, selectedId]);
+  }, [mapScriptReady]);
 
   return (
-    <section className="flex h-full min-h-[300px] flex-1 flex-col overflow-hidden rounded-none border border-border bg-card shadow-sm ring-1 ring-foreground/5 lg:min-h-0">
+    <section className="flex h-full min-h-0 flex-1 flex-col overflow-hidden rounded-none border border-border bg-card font-sans text-sm shadow-sm ring-1 ring-foreground/5">
       <div className="border-b border-border bg-brand-primary px-4 py-3 text-primary-foreground">
         <div className="flex items-center justify-between gap-2">
-          <h2 className="font-heading text-xs font-semibold tracking-widest uppercase">
+          <h2 className="text-xs font-semibold tracking-wide uppercase">
             관내 지도
           </h2>
           <Badge
             variant="outline"
-            className="border-white/40 bg-white/10 text-[0.6rem] text-white"
+            className="border-white/40 bg-white/10 text-xs text-white"
           >
             실데이터
           </Badge>
         </div>
-        <p className="mt-1 text-[0.65rem] tracking-wide text-primary-foreground/80">
+        <p className="mt-1 text-xs tracking-wide text-primary-foreground/80">
           매출 하락 업체는 붉은 마커, 국토부 단지는 🏠 마커입니다. 단지 클릭 시 안내창,
           Shift+클릭 시 다중 선택(영업 단지 토글)입니다.
         </p>
+        {demoMode ? (
+          <Badge
+            variant="outline"
+            className="mt-2 border-amber-300/60 bg-amber-500/15 text-[10px] text-amber-50"
+          >
+            데모 지도
+          </Badge>
+        ) : null}
       </div>
 
       {clientId ? (
@@ -651,7 +689,18 @@ export const NaverMapPanel = ({
           className="absolute inset-0 z-0 h-full w-full min-h-[200px]"
           id="sales-nav-map"
         />
-        {!clientId ? (
+        {demoMode && !clientId ? (
+          <DemoMapFallback
+            businesses={businesses}
+            selectedId={selectedId}
+            onMarkerSelect={onMarkerSelect}
+            apartments={apartments}
+            selectedAptIdList={selectedAptIdList}
+            onAptSelect={onAptSelect}
+            radiusAnchor={radiusAnchor}
+          />
+        ) : null}
+        {!demoMode && !clientId ? (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-6 text-center text-muted-foreground">
             <p className="text-sm font-medium text-foreground">
               지도를 불러오려면 환경 변수가 필요합니다.
@@ -668,7 +717,7 @@ export const NaverMapPanel = ({
         ) : null}
       </div>
 
-      <div className="flex flex-wrap gap-4 border-t border-border bg-muted/30 px-4 py-2 text-[0.65rem] text-muted-foreground">
+      <div className="flex flex-wrap gap-4 border-t border-border bg-muted/30 px-4 py-2 text-xs text-muted-foreground">
         <span className="inline-flex items-center gap-1.5">
           <span
             className="inline-block size-2.5 rounded-full"
@@ -684,10 +733,10 @@ export const NaverMapPanel = ({
           매출 유지·성장
         </span>
         <span className="inline-flex items-center gap-1.5">
-          <span className="text-[0.65rem]">🏠 국토부 단지</span>
+          <span className="text-xs">🏠 국토부 단지</span>
         </span>
         <span className="inline-flex items-center gap-1.5">
-          <Badge variant="outline" className="text-[0.55rem]">
+          <Badge variant="outline" className="text-xs">
             가공데이터
           </Badge>
           색상 분류 기준은 가공 규칙을 따릅니다.

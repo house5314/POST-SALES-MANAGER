@@ -1,7 +1,14 @@
 "use client";
 
-import { LayoutDashboard } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { LayoutDashboard, ListFilter, MessageSquare } from "lucide-react";
+import { useSearchParams } from "next/navigation";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import {
   FilterSidebar,
@@ -10,22 +17,45 @@ import {
 import { InsightCenterPanel } from "@/components/sales-navigator/InsightCenterPanel";
 import { NaverMapPanel } from "@/components/sales-navigator/NaverMapPanel";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type {
   IndustryMediumItem,
   IndustrySmallItem,
 } from "@/lib/commercial-api/semas-store";
 import type { MolitAptComplex } from "@/lib/molit/types";
+import { buildMockEvlInfo } from "@/lib/commercial-api/mock-sales-metrics";
 import { calculatePostalQuote } from "@/lib/postal-calc";
+import {
+  buildDemoBusinessRows,
+  buildDemoIndustryAvgStat,
+  buildDemoMarketByRegion,
+  buildDemoMolitApts,
+  DEMO_DONG_OPTIONS,
+  DEMO_IND_MEDIUM,
+  DEMO_IND_SMALL,
+  DEMO_INDUSTRY_LARGE,
+  demoAnchorForDongCode,
+  isSalesNavigatorDemoMode,
+} from "@/lib/sales/demo-sales-navigator-data";
 import { resolveLegalDongForMolit } from "@/lib/sales/resolve-legal-dong-for-molit";
 import { isPriorityLead } from "@/lib/sales/priority-lead";
 import type { BusinessRow, MarketStatRow } from "@/lib/sales/types";
+import { DATA_GOVERNANCE_FOOTER } from "@/lib/operations/governance-copy";
 
 type IndsLarge = { indsLclsCd: string; indsLclsNm: string };
 type Option = { value: string; label: string };
 
 /** 상가 목록 조회 후 첫 업체 자동 포커스 시 축척(약 300m 수준, 네이버 NCP 줌 14 전후). */
 const ZOOM_AFTER_AUTO_FIRST_STORE = 14;
-/** 목록·지도에서 업체를 직접 선택했을 때 줌(약 50m 수준, 19는 과도 확대). */
+/** 목록·지도에서 업체를 직접 선택했을 때 줌(약 30m 체감, 네이버 NCP 줌 18 전후). */
 const ZOOM_AFTER_MANUAL_BUSINESS_SELECT = 18;
 type EvlInfo = {
   gender: "남성" | "여성";
@@ -302,12 +332,28 @@ const SIGUNGU_DATA: Record<string, string[]> = {
 
 /** PRD 레이아웃 + 공공 상가 API 오버레이(공모전 제출용 · DB 없음). */
 export const SalesNavigatorDashboard = () => {
+  const searchParams = useSearchParams();
+  const isDemo = useMemo(
+    () => isSalesNavigatorDemoMode(searchParams.get("demo")),
+    [searchParams]
+  );
+  const demoLayoutSeededRef = useRef(false);
+
   const clientId = process.env.NEXT_PUBLIC_NAVER_CLIENT_ID?.trim();
 
   const [overlayStores, setOverlayStores] = useState<BusinessRow[]>([]);
-  const [marketByRegion] = useState<Record<string, MarketStatRow>>({});
+  const [marketByRegion, setMarketByRegion] = useState<
+    Record<string, MarketStatRow>
+  >({});
+  /** 상권 요약 fetch 응답이 늦게 도착해 이전 목록에 덮어쓰이지 않도록 순번을 맞춥니다. */
+  const marketStatsFetchSeq = useRef(0);
+  const [marketStatsLoading, setMarketStatsLoading] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
   const [evlInfo, setEvlInfo] = useState<EvlInfo | null>(null);
+  /** `evlInfo`가 어느 `business.id` 조회 결과인지 표시해, 선택이 바뀐 뒤에도 이전 평가정보가 노출되지 않게 합니다. */
+  const [evlFetchedForId, setEvlFetchedForId] = useState<string | null>(null);
+  /** 평가정보 fetch 응답 시점의 선택 업체 id(꼬인 응답 폐기용). */
+  const evlTargetIdRef = useRef<string | null>(null);
   const [industryAvgStat, setIndustryAvgStat] = useState<IndustryAvgStat | null>(
     null
   );
@@ -325,7 +371,57 @@ export const SalesNavigatorDashboard = () => {
   const [indMediumOptions, setIndMediumOptions] = useState<Option[]>([]);
   const [indSmallOptions, setIndSmallOptions] = useState<Option[]>([]);
 
+  /** 설문 링크 `?demo=1` — 레이아웃·필터 옵션만 시드하고 상가는 로컬 빌더로 채웁니다. */
   useEffect(() => {
+    if (!isDemo) {
+      demoLayoutSeededRef.current = false;
+      return;
+    }
+    if (demoLayoutSeededRef.current) return;
+    demoLayoutSeededRef.current = true;
+    setApiError(null);
+    setIndsLargeOptions(DEMO_INDUSTRY_LARGE.map((x) => ({ ...x })));
+    setSelectedSido("서울특별시");
+    setSelectedSigungu("종로구");
+    setSigunguOptions(
+      (SIGUNGU_DATA["서울특별시"] ?? []).map((name) => ({
+        value: name,
+        label: name,
+      }))
+    );
+    setDongOptions([...DEMO_DONG_OPTIONS]);
+    setSelectedDong(DEMO_DONG_OPTIONS[0]!.value);
+    setSelectedIndLarge("I");
+    setSelectedIndMedium("I01");
+    setSelectedIndSmall("I0111");
+    setIndsLclsFilter("all");
+  }, [isDemo]);
+
+  /** 데모 모드에서 중·소분류 드롭다운을 API 대신 고정 목록으로 채웁니다. */
+  useEffect(() => {
+    if (!isDemo || !selectedIndLarge) return;
+    const mo = DEMO_IND_MEDIUM[selectedIndLarge] ?? [];
+    queueMicrotask(() => {
+      setIndMediumOptions(mo);
+      setSelectedIndMedium((prev) =>
+        mo.some((x) => x.value === prev) ? prev : mo[0]?.value ?? ""
+      );
+    });
+  }, [isDemo, selectedIndLarge]);
+
+  useEffect(() => {
+    if (!isDemo || !selectedIndMedium) return;
+    const so = DEMO_IND_SMALL[selectedIndMedium] ?? [];
+    queueMicrotask(() => {
+      setIndSmallOptions(so);
+      setSelectedIndSmall((prev) =>
+        so.some((x) => x.value === prev) ? prev : so[0]?.value ?? ""
+      );
+    });
+  }, [isDemo, selectedIndMedium]);
+
+  useEffect(() => {
+    if (isDemo) return;
     void (async () => {
       try {
         const res = await fetch("/api/commercial/industry-large");
@@ -337,13 +433,18 @@ export const SalesNavigatorDashboard = () => {
         if (data.ok && data.items?.length) {
           setIndsLargeOptions(data.items);
         } else if (!data.ok && data.message) {
-          console.error("[공공 API · 업종 대분류]", data.message);
+          if (process.env.NODE_ENV === "development") {
+            console.error("[공공 API · 업종 대분류]", data.message);
+          }
         }
-      } catch {
+      } catch (e) {
         /* 업종 API 실패 시 필터만 비움 */
+        if (process.env.NODE_ENV === "development") {
+          console.warn("[공공 API · 업종 대분류] 네트워크 또는 파싱 오류", e);
+        }
       }
     })();
-  }, []);
+  }, [isDemo]);
 
   const allRows = overlayStores;
 
@@ -351,14 +452,11 @@ export const SalesNavigatorDashboard = () => {
   const [pickedId, setPickedId] = useState<string | null>(null);
   const [businessMorphZoom, setBusinessMorphZoom] = useState(ZOOM_AFTER_MANUAL_BUSINESS_SELECT);
   const [aptRows, setAptRows] = useState<MolitAptComplex[]>([]);
-  const [aptLoading, setAptLoading] = useState(false);
-  const [aptError, setAptError] = useState<string | null>(null);
   const [selectedAptIds, setSelectedAptIds] = useState<Set<string>>(new Set());
-  const [moveInPitch, setMoveInPitch] = useState<{
-    surge: boolean;
-    headline: string;
-    detail: string;
-  } | null>(null);
+  const [mobileWorkspaceOpen, setMobileWorkspaceOpen] = useState(false);
+  const [mobileWorkspaceTab, setMobileWorkspaceTab] = useState<
+    "insight" | "filter"
+  >("insight");
 
   /** 지역 라벨을 시/도-시군구-동으로 안전하게 분해합니다. */
   const parseRegionHierarchy = useCallback(
@@ -386,6 +484,7 @@ export const SalesNavigatorDashboard = () => {
 
   /** 시군구 선택 시 행정표준 검색 API로 읍/면/동 목록을 동적으로 갱신합니다. */
   useEffect(() => {
+    if (isDemo) return;
     if (!selectedSido || !selectedSigungu) return;
     let isActive = true;
     void (async () => {
@@ -424,10 +523,11 @@ export const SalesNavigatorDashboard = () => {
     return () => {
       isActive = false;
     };
-  }, [parseRegionHierarchy, selectedSido, selectedSigungu]);
+  }, [isDemo, parseRegionHierarchy, selectedSido, selectedSigungu]);
 
   /** 대분류 선택 시 중분류를 서버 API로 조회합니다. */
   useEffect(() => {
+    if (isDemo) return;
     if (!selectedIndLarge) return;
     let isActive = true;
     void (async () => {
@@ -452,10 +552,11 @@ export const SalesNavigatorDashboard = () => {
     return () => {
       isActive = false;
     };
-  }, [selectedIndLarge]);
+  }, [isDemo, selectedIndLarge]);
 
   /** 중분류 선택 시 소분류를 서버 API로 조회합니다. */
   useEffect(() => {
+    if (isDemo) return;
     if (!selectedIndLarge || !selectedIndMedium) return;
     let isActive = true;
     void (async () => {
@@ -482,7 +583,7 @@ export const SalesNavigatorDashboard = () => {
     return () => {
       isActive = false;
     };
-  }, [selectedIndLarge, selectedIndMedium]);
+  }, [isDemo, selectedIndLarge, selectedIndMedium]);
 
   const filtered = useMemo(() => {
     /** 현재 매출 추세 필터와 업체의 추세값이 일치하는지 판정합니다. */
@@ -493,14 +594,9 @@ export const SalesNavigatorDashboard = () => {
     };
 
     return allRows.filter((b) => {
-      // 1) 행정동/업종 조건을 먼저 적용합니다.
+      // 1) 동·대분류만 클라이언트에서 걸고, 중·소분류는 `/api/commercial/stores` 서버 필터 결과를 그대로 둡니다.
       if (selectedDong && b.regionCode !== selectedDong) return false;
       if (selectedIndLarge && b.indsLclsCd !== selectedIndLarge) return false;
-      if (selectedIndMedium) {
-        const medium = b.category.split(/[>/]/)[0]?.trim() || b.category.trim();
-        if (medium !== selectedIndMedium) return false;
-      }
-      if (selectedIndSmall && b.category.trim() !== selectedIndSmall) return false;
 
       // 2) 매출 추세 버튼(하락/성장/전체)을 마지막에 적용합니다.
       if (!matchesRevenueFilter(b.revenueTrend)) return false;
@@ -520,8 +616,6 @@ export const SalesNavigatorDashboard = () => {
     revenueFilter,
     selectedDong,
     selectedIndLarge,
-    selectedIndMedium,
-    selectedIndSmall,
   ]);
 
   const selectedDongLabel = useMemo(() => {
@@ -556,6 +650,105 @@ export const SalesNavigatorDashboard = () => {
     ? marketByRegion[selected.regionCode]
     : undefined;
 
+  /** 읍·면·동(법정동)·상가 목록·선택 업체 `regionCode`로 `marketByRegion`을 채워 우선 영업·인사이트에 반영합니다. */
+  useEffect(() => {
+    const codes = new Set<string>();
+    const dongCd = selectedDong.trim();
+    if (dongCd) codes.add(dongCd);
+    for (const row of overlayStores) {
+      const c = row.regionCode?.trim();
+      if (c) codes.add(c);
+    }
+    const selCode = selected?.regionCode?.trim();
+    if (selCode) codes.add(selCode);
+
+    if (codes.size === 0) {
+      queueMicrotask(() => {
+        setMarketByRegion({});
+        setMarketStatsLoading(false);
+      });
+      return;
+    }
+
+    if (isDemo) {
+      const dongLabelDemo = selectedDongLabel.trim();
+      const seq = ++marketStatsFetchSeq.current;
+      queueMicrotask(() => {
+        setMarketStatsLoading(true);
+      });
+      queueMicrotask(() => {
+        if (seq !== marketStatsFetchSeq.current) return;
+        const dongMeta = DEMO_DONG_OPTIONS.find((d) => d.value === dongCd);
+        const label = (dongMeta?.label ?? dongLabelDemo).trim() || "데모";
+        setMarketByRegion(buildDemoMarketByRegion(overlayStores, dongCd, label));
+        setMarketStatsLoading(false);
+      });
+      return;
+    }
+
+    const dongLabel = selectedDongLabel.trim();
+    const regions = [...codes].map((code) => ({
+      code,
+      ...(dongCd && code === dongCd && dongLabel ? { label: dongLabel } : {}),
+    }));
+
+    queueMicrotask(() => {
+      setMarketStatsLoading(true);
+    });
+
+    const seq = ++marketStatsFetchSeq.current;
+    void (async () => {
+      try {
+        const res = await fetch("/api/commercial/market-stats", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ regions }),
+        });
+        const data = (await res.json()) as {
+          ok: boolean;
+          byRegion?: Record<string, MarketStatRow>;
+          message?: string;
+        };
+        if (seq !== marketStatsFetchSeq.current) return;
+        if (!data.ok || !data.byRegion) {
+          if (process.env.NODE_ENV === "development" && data.message) {
+            console.error("[상권 요약]", data.message);
+          }
+          setMarketByRegion({});
+          return;
+        }
+        const incoming = data.byRegion;
+        setMarketByRegion(() => {
+          const next: Record<string, MarketStatRow> = {};
+          for (const code of codes) {
+            const row = incoming[code];
+            if (row) next[code] = row;
+          }
+          return next;
+        });
+      } catch (e) {
+        if (seq !== marketStatsFetchSeq.current) return;
+        if (process.env.NODE_ENV === "development") {
+          console.error("[상권 요약]", e);
+        }
+        setMarketByRegion({});
+      } finally {
+        if (seq === marketStatsFetchSeq.current) {
+          queueMicrotask(() => {
+            setMarketStatsLoading(false);
+          });
+        }
+      }
+    })();
+  }, [
+    isDemo,
+    overlayStores,
+    selected?.regionCode,
+    selectedDong,
+    selectedDongLabel,
+  ]);
+
+  /** 상권 기반 추정 부수(단지 미선택 시 `effectiveMailQty`의 기본값으로만 사용). */
   const mailQuantity = useMemo(() => {
     if (!market) return 1200;
     return Math.max(
@@ -603,7 +796,16 @@ export const SalesNavigatorDashboard = () => {
     setPickedId(id);
   }, []);
 
-  /** 지도에서 단지 마커 클릭 시 선택을 갱신합니다(Shift면 다중 토글). */
+  /** 현재 선택과 일치할 때만 평가정보를 넘깁니다(목록·상담 초안 동기화). */
+  const evlForSelected = useMemo(
+    () => (selected && evlFetchedForId === selected.id ? evlInfo : null),
+    [evlFetchedForId, evlInfo, selected]
+  );
+  /** 선택 업체에 대한 평가정보를 아직 받지 못했으면 true. */
+  const evlLoading = useMemo(
+    () => !!(selected && evlFetchedForId !== selected.id),
+    [evlFetchedForId, selected]
+  );
   const handleAptMapSelect = useCallback(
     (id: string, opts: { shiftKey: boolean }) => {
       setSelectedAptIds((prev) => {
@@ -619,29 +821,19 @@ export const SalesNavigatorDashboard = () => {
     []
   );
 
-  /** 체크박스로 단지 선택을 바꿉니다. */
-  const handleAptToggle = useCallback((id: string, checked: boolean) => {
-    setSelectedAptIds((prev) => {
-      const next = new Set(prev);
-      if (checked) next.add(id);
-      else next.delete(id);
-      return next;
-    });
-  }, []);
-
-  /** 반경 내 단지 전체 선택. */
-  const handleSelectAllApts = useCallback(() => {
-    setSelectedAptIds(new Set(aptRows.map((a) => a.id)));
-  }, [aptRows]);
-
-  /** 단지 선택 초기화. */
-  const handleClearApts = useCallback(() => {
-    setSelectedAptIds(new Set());
-  }, []);
-
-  /** 선택된 업체의 개인사업자 평가정보를 조회해 중앙 패널로 전달합니다. */
+  /** 선택된 업체의 개인사업자 평가정보를 조회해 중앙 패널·목록과 동기화합니다. */
   useEffect(() => {
+    evlTargetIdRef.current = selected?.id ?? null;
     if (!selected) {
+      return;
+    }
+    const targetId = selected.id;
+    if (isDemo) {
+      queueMicrotask(() => {
+        if (evlTargetIdRef.current !== targetId) return;
+        setEvlInfo(buildMockEvlInfo(selected.id, selected.name));
+        setEvlFetchedForId(targetId);
+      });
       return;
     }
     let active = true;
@@ -658,47 +850,63 @@ export const SalesNavigatorDashboard = () => {
           message?: string;
         };
         if (!active) return;
+        if (evlTargetIdRef.current !== targetId) return;
         if (!data.ok || !data.info) {
           setEvlInfo(null);
+          setEvlFetchedForId(targetId);
           return;
         }
         setEvlInfo(data.info);
+        setEvlFetchedForId(targetId);
       } catch {
-        if (active) setEvlInfo(null);
+        if (!active) return;
+        if (evlTargetIdRef.current !== targetId) return;
+        setEvlInfo(null);
+        setEvlFetchedForId(targetId);
       }
     })();
     return () => {
       active = false;
     };
-  }, [selected]);
+  }, [isDemo, selected]);
 
   /** 법정동 기준 국토부 공동주택 단지 목록을 불러옵니다. */
   useEffect(() => {
     if (!selected) {
       queueMicrotask(() => {
         setAptRows([]);
-        setAptError(null);
-        setAptLoading(false);
       });
       return;
+    }
+    if (isDemo) {
+      let cancelled = false;
+      const latN = Number(selected.lat);
+      const lngN = Number(selected.lng);
+      const anchor =
+        Number.isFinite(latN) &&
+        Number.isFinite(lngN) &&
+        !(latN === 0 && lngN === 0)
+          ? { lat: latN, lng: lngN }
+          : demoAnchorForDongCode(selected.regionCode ?? "");
+      queueMicrotask(() => {
+        if (cancelled) return;
+        const apts = buildDemoMolitApts(anchor);
+        setAptRows(apts);
+        setSelectedAptIds(new Set(apts.map((x) => x.id)));
+      });
+      return () => {
+        cancelled = true;
+      };
     }
     const bjdong = resolveLegalDongForMolit(selected);
     if (!bjdong) {
       queueMicrotask(() => {
         setAptRows([]);
-        setAptError(
-          "이 상가 응답에 법정동코드(ldongCd)가 없어 단지 목록을 호출할 수 없습니다. 법정동이 있는 다른 상호를 선택하거나, 같은 법정동으로 조회되는 상가 데이터를 이용해 주세요."
-        );
-        setAptLoading(false);
       });
       return;
     }
 
     let cancelled = false;
-    queueMicrotask(() => {
-      setAptLoading(true);
-      setAptError(null);
-    });
 
     const q = new URLSearchParams({ bjdongCd: bjdong });
     const lat = Number(selected.lat);
@@ -724,72 +932,26 @@ export const SalesNavigatorDashboard = () => {
         if (cancelled) return;
         if (!data.ok) {
           setAptRows([]);
-          setAptError(data.message ?? "국토부 단지 목록을 불러오지 못했습니다.");
           setSelectedAptIds(new Set());
           return;
         }
         const items = data.items ?? [];
         setAptRows(items);
-        setAptError(null);
         setSelectedAptIds(new Set(items.map((x) => x.id)));
       } catch (e) {
         if (cancelled) return;
-        setAptRows([]);
-        setAptError(
-          e instanceof Error
-            ? e.message
-            : "국토부 단지 목록 조회 중 오류가 발생했습니다."
-        );
-        setSelectedAptIds(new Set());
-      } finally {
-        if (!cancelled) setAptLoading(false);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [selected]);
-
-  /** 이사·입주 트리거 문구(업종 규칙)를 조회합니다. */
-  useEffect(() => {
-    if (!selected) {
-      queueMicrotask(() => {
-        setMoveInPitch(null);
-      });
-      return;
-    }
-    let cancelled = false;
-    void (async () => {
-      try {
-        const q = new URLSearchParams({
-          category: selected.category,
-          regionCode: selected.regionCode,
-        });
-        const res = await fetch(`/api/molit/getStatList?${q.toString()}`);
-        const data = (await res.json()) as {
-          ok: boolean;
-          surge?: boolean;
-          headline?: string;
-          detail?: string;
-        };
-        if (cancelled || !data.ok) {
-          if (!cancelled) setMoveInPitch(null);
-          return;
+        if (process.env.NODE_ENV === "development") {
+          console.error("[국토부 단지 목록]", e);
         }
-        setMoveInPitch({
-          surge: !!data.surge,
-          headline: data.headline ?? "",
-          detail: data.detail ?? "",
-        });
-      } catch {
-        if (!cancelled) setMoveInPitch(null);
+        setAptRows([]);
+        setSelectedAptIds(new Set());
       }
     })();
+
     return () => {
       cancelled = true;
     };
-  }, [selected]);
+  }, [isDemo, selected]);
 
   /** 업종 대분류에 따라 평균매출 API 엔드포인트를 동적으로 분기 호출합니다. */
   useEffect(() => {
@@ -801,6 +963,14 @@ export const SalesNavigatorDashboard = () => {
     if (!effectiveLargeName || !effectiveDong) {
       queueMicrotask(() => {
         setIndustryAvgStat(null);
+      });
+      return;
+    }
+    if (isDemo) {
+      queueMicrotask(() => {
+        setIndustryAvgStat(
+          buildDemoIndustryAvgStat(effectiveDong, effectiveLargeName)
+        );
       });
       return;
     }
@@ -846,6 +1016,7 @@ export const SalesNavigatorDashboard = () => {
     };
   }, [
     indsLargeOptions,
+    isDemo,
     selected,
     selectedDong,
     selectedIndLarge,
@@ -890,6 +1061,7 @@ export const SalesNavigatorDashboard = () => {
       setSelectedIndSmall("");
       setIndSmallOptions([]);
       if (!selectedIndLarge || !newMedium) return;
+      if (isDemo) return;
       void (async () => {
         try {
           const q = new URLSearchParams({
@@ -913,12 +1085,36 @@ export const SalesNavigatorDashboard = () => {
         }
       })();
     },
-    [selectedIndLarge]
+    [isDemo, selectedIndLarge]
   );
 
   const handleFetchCommercialStores = useCallback(async () => {
     const effectiveDong = selectedDong.trim();
     if (!effectiveDong) return;
+    if (isDemo) {
+      const dongMeta = DEMO_DONG_OPTIONS.find((d) => d.value === effectiveDong);
+      const dongLabel = dongMeta?.label ?? "데모";
+      const rows = buildDemoBusinessRows({
+        regionCode: effectiveDong,
+        dongLabel,
+        indsLclsCd: selectedIndLarge,
+        indsMclsCd: selectedIndMedium,
+        indsSclsCd: selectedIndSmall,
+      });
+      setOverlayStores(rows);
+      const firstWithPoint = rows.find(
+        (s) =>
+          Number.isFinite(s.lat) &&
+          Number.isFinite(s.lng) &&
+          !(s.lat === 0 && s.lng === 0)
+      );
+      if (firstWithPoint) {
+        setBusinessMorphZoom(ZOOM_AFTER_AUTO_FIRST_STORE);
+        setPickedId(firstWithPoint.id);
+      }
+      setApiError(null);
+      return;
+    }
     try {
       const q = new URLSearchParams();
       q.set("dong", effectiveDong);
@@ -934,7 +1130,9 @@ export const SalesNavigatorDashboard = () => {
       };
       if (!data.ok) {
         const msg = data.message ?? "공공 상가 조회에 실패했습니다.";
-        console.error("[공공 API · 상가업소]", msg);
+        if (process.env.NODE_ENV === "development") {
+          console.error("[공공 API · 상가업소]", msg);
+        }
         setApiError(msg);
         return;
       }
@@ -958,6 +1156,7 @@ export const SalesNavigatorDashboard = () => {
     }
   }, [
     indsLclsFilter,
+    isDemo,
     selectedDong,
     selectedIndLarge,
     selectedIndMedium,
@@ -977,16 +1176,49 @@ export const SalesNavigatorDashboard = () => {
     selectedIndSmall,
   ]);
 
+  /** 데스크톱 너비로 바뀌면 하단 시트를 닫아 패널 중복·포커스 트랩을 방지합니다. */
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 1024px)");
+    const onChange = () => {
+      if (mq.matches) setMobileWorkspaceOpen(false);
+    };
+    onChange();
+    if (typeof mq.addEventListener === "function") {
+      mq.addEventListener("change", onChange);
+      return () => mq.removeEventListener("change", onChange);
+    }
+    mq.addListener(onChange);
+    return () => mq.removeListener(onChange);
+  }, []);
+
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-background">
+    <div className="flex h-dvh max-h-dvh min-h-0 flex-col overflow-hidden bg-background font-sans text-sm">
+      <a
+        href="#sales-map-panel"
+        className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-20 focus:z-[70] focus:rounded-md focus:border focus:border-border focus:bg-background focus:px-3 focus:py-2 focus:text-sm focus:shadow-md focus:outline-none"
+      >
+        지도 영역으로 건너뛰기
+      </a>
+      {isDemo ? (
+        <div
+          role="status"
+          className="shrink-0 border-b border-amber-500/50 bg-amber-100 px-4 py-2.5 text-center text-xs leading-snug text-amber-950 dark:border-amber-400/40 dark:bg-amber-950/50 dark:text-amber-50 lg:px-8"
+        >
+          <strong>데모 모드</strong> — 공공·행정·네이버 지도 API 키 없이 시연 데이터로 전체 흐름을 체험합니다.
+          실제 연동은 URL에서 <span className="font-mono">?demo=1</span>을 제거한 뒤 이용하세요.
+        </div>
+      ) : null}
       <header className="shrink-0 border-b border-border bg-brand-primary px-4 py-4 text-primary-foreground lg:px-8">
         <div className="flex flex-wrap items-center gap-3">
           <LayoutDashboard className="size-6 opacity-90" aria-hidden />
           <div>
-            <p className="font-heading text-[0.65rem] font-semibold tracking-[0.2em] text-primary-foreground/80 uppercase">
+            <p className="text-xs font-semibold tracking-wide text-primary-foreground/80 uppercase">
               Post AI Smart Sales Navigator
             </p>
-            <h1 className="mt-0.5 font-heading text-lg font-semibold tracking-wide md:text-xl">
+            <h1
+              id="sales-navigator-title"
+              className="mt-0.5 text-base font-semibold tracking-tight md:text-lg"
+            >
               우체국 B2B 스마트 영업 네비게이터
             </h1>
           </div>
@@ -1006,9 +1238,15 @@ export const SalesNavigatorDashboard = () => {
         </div>
       ) : null}
 
-      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden p-4 lg:flex-row lg:gap-5 lg:p-6">
-          <div className="min-h-0 lg:w-[60%]">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden p-4 lg:flex-row lg:gap-5 lg:p-6">
+          <div
+            id="sales-map-panel"
+            className="relative flex min-h-0 min-h-[min(42dvh,18rem)] flex-1 flex-col scroll-mt-4 lg:h-full lg:min-h-0 lg:min-w-0 lg:w-[60%]"
+            tabIndex={-1}
+          >
             <NaverMapPanel
+              demoMode={isDemo}
               clientId={clientId}
               businesses={filtered}
               selectedId={activeId}
@@ -1021,29 +1259,23 @@ export const SalesNavigatorDashboard = () => {
               businessMorphZoom={businessMorphZoom}
             />
           </div>
-          <div className="min-h-0 lg:w-[20%]">
+          <div className="hidden min-h-0 lg:block lg:w-[20%]">
             <InsightCenterPanel
               business={selected}
               market={market}
-              mailQuantity={mailQuantity}
+              marketStatsLoading={marketStatsLoading}
               effectiveMailQty={effectiveMailQty}
               postalQuote={postalQuote}
               isPriority={isPriority}
-              evlInfo={evlInfo}
+              evlInfo={evlForSelected}
               industryAvgStat={industryAvgStat}
               selectedLargeName={selectedLargeName}
               selectedDongLabel={selectedDongLabel}
               apartments={aptRows}
-              aptLoading={aptLoading}
-              aptError={aptError}
               selectedAptIds={selectedAptIds}
-              onAptToggle={handleAptToggle}
-              onSelectAllApts={handleSelectAllApts}
-              onClearApts={handleClearApts}
-              moveInPitch={moveInPitch}
             />
           </div>
-          <div className="min-h-0 lg:w-[20%]">
+          <div className="hidden min-h-0 lg:block lg:w-[20%]">
             <FilterSidebar
               sidoOptions={sidoOptions}
               sigunguOptions={sigunguOptions}
@@ -1069,24 +1301,160 @@ export const SalesNavigatorDashboard = () => {
               selectedId={activeId}
               onSelect={handleSelect}
               getPriority={getPriority}
+              selectedBusinessEvl={evlForSelected}
+              selectedBusinessEvlLoading={evlLoading}
             />
           </div>
         </div>
-      <div className="border-t border-border bg-muted/30 px-4 py-2 text-[0.65rem] text-muted-foreground lg:px-8">
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge variant="outline" className="text-[0.55rem]">
-            실데이터
-          </Badge>
-          <Badge variant="outline" className="text-[0.55rem]">
-            가공데이터
-          </Badge>
-          <Badge variant="outline" className="text-[0.55rem]">
-            시뮬레이션
-          </Badge>
-          <span>
-            실데이터(공공 원천), 가공데이터(정제/규칙), 시뮬레이션(가정 기반)을
-            함께 사용합니다.
-          </span>
+
+        <nav
+          className="flex shrink-0 gap-2 border-t border-border bg-background/95 px-4 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 backdrop-blur-sm lg:hidden"
+          aria-label="모바일·태블릿 상담 및 필터"
+        >
+          <Button
+            type="button"
+            variant="secondary"
+            className="h-11 min-h-11 flex-1 gap-2 font-medium"
+            aria-expanded={mobileWorkspaceOpen && mobileWorkspaceTab === "insight"}
+            onClick={() => {
+              setMobileWorkspaceTab("insight");
+              setMobileWorkspaceOpen(true);
+            }}
+          >
+            <MessageSquare className="size-4 shrink-0" aria-hidden />
+            상담·제안
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            className="h-11 min-h-11 flex-1 gap-2 font-medium"
+            aria-expanded={mobileWorkspaceOpen && mobileWorkspaceTab === "filter"}
+            onClick={() => {
+              setMobileWorkspaceTab("filter");
+              setMobileWorkspaceOpen(true);
+            }}
+          >
+            <ListFilter className="size-4 shrink-0" aria-hidden />
+            필터·목록
+          </Button>
+        </nav>
+      </div>
+
+      <Sheet open={mobileWorkspaceOpen} onOpenChange={setMobileWorkspaceOpen}>
+        <SheetContent
+          side="bottom"
+          showCloseButton
+          className="flex max-h-[min(92dvh,880px)] flex-col gap-0 rounded-t-xl border-x-0 p-0 pt-2"
+          aria-describedby="mobile-workspace-desc"
+        >
+          <SheetHeader className="shrink-0 space-y-1 border-b border-border px-4 py-3 sm:px-5">
+            <SheetTitle className="font-sans text-base font-semibold normal-case tracking-tight text-foreground">
+              상담·필터
+            </SheetTitle>
+            <SheetDescription
+              id="mobile-workspace-desc"
+              className="text-xs leading-snug text-muted-foreground"
+            >
+              창구 태블릿에서 지도를 넓게 쓰고, 필요할 때만 패널을 여세요. 아래 탭으로
+              상담 초안과 필터를 전환합니다.
+            </SheetDescription>
+          </SheetHeader>
+          <Tabs
+            value={mobileWorkspaceTab}
+            onValueChange={(v) => {
+              if (v === "insight" || v === "filter") setMobileWorkspaceTab(v);
+            }}
+            className="flex min-h-0 flex-1 flex-col px-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2"
+          >
+            <TabsList
+              variant="line"
+              className="mb-2 grid h-auto w-full max-w-full shrink-0 grid-cols-2 gap-1 px-0"
+            >
+              <TabsTrigger value="insight" className="normal-case">
+                상담·제안
+              </TabsTrigger>
+              <TabsTrigger value="filter" className="normal-case">
+                필터·목록
+              </TabsTrigger>
+            </TabsList>
+            <TabsContent
+              value="insight"
+              className="mt-0 min-h-0 flex-1 overflow-y-auto px-1 pb-4 outline-none data-[state=inactive]:hidden"
+            >
+              <InsightCenterPanel
+                business={selected}
+                market={market}
+                marketStatsLoading={marketStatsLoading}
+                effectiveMailQty={effectiveMailQty}
+                postalQuote={postalQuote}
+                isPriority={isPriority}
+                evlInfo={evlForSelected}
+                industryAvgStat={industryAvgStat}
+                selectedLargeName={selectedLargeName}
+                selectedDongLabel={selectedDongLabel}
+                apartments={aptRows}
+                selectedAptIds={selectedAptIds}
+                singleScrollSurface
+              />
+            </TabsContent>
+            <TabsContent
+              value="filter"
+              className="mt-0 min-h-0 flex-1 overflow-y-auto px-1 pb-4 outline-none data-[state=inactive]:hidden"
+            >
+              <FilterSidebar
+                sidoOptions={sidoOptions}
+                sigunguOptions={sigunguOptions}
+                dongOptions={dongOptions}
+                selectedSido={selectedSido}
+                selectedSigungu={selectedSigungu}
+                selectedDong={selectedDong}
+                onSidoChange={handleSidoChange}
+                onSigunguChange={handleSigunguChange}
+                onDongChange={setSelectedDong}
+                indLargeOptions={indLargeOptions}
+                indMediumOptions={indMediumOptions}
+                indSmallOptions={indSmallOptions}
+                selectedIndLarge={selectedIndLarge}
+                selectedIndMedium={selectedIndMedium}
+                selectedIndSmall={selectedIndSmall}
+                onIndLargeChange={handleIndLargeChange}
+                onIndMediumChange={handleIndMediumChange}
+                onIndSmallChange={setSelectedIndSmall}
+                revenueFilter={revenueFilter}
+                onRevenueChange={setRevenueFilter}
+                businesses={filtered}
+                selectedId={activeId}
+                onSelect={handleSelect}
+                getPriority={getPriority}
+                selectedBusinessEvl={evlForSelected}
+                selectedBusinessEvlLoading={evlLoading}
+                embeddedMobile
+              />
+            </TabsContent>
+          </Tabs>
+        </SheetContent>
+      </Sheet>
+
+      <div className="shrink-0 border-t border-border bg-muted/30 px-4 py-2 text-xs text-muted-foreground lg:px-8">
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="outline" className="text-xs">
+              실데이터
+            </Badge>
+            <Badge variant="outline" className="text-xs">
+              가공데이터
+            </Badge>
+            <Badge variant="outline" className="text-xs">
+              시뮬레이션
+            </Badge>
+            <span>
+              실데이터(공공 원천), 가공데이터(정제/규칙), 시뮬레이션(가정 기반)을
+              함께 사용합니다.
+            </span>
+          </div>
+          <p className="min-w-0 text-[11px] leading-snug text-muted-foreground/95 sm:flex-1 sm:basis-full lg:basis-full">
+            {DATA_GOVERNANCE_FOOTER}
+          </p>
         </div>
       </div>
     </div>

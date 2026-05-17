@@ -40,7 +40,7 @@ export const isPublicDataXmlErrorPayload = (raw: string): boolean => {
 };
 
 /**
- * fetch 응답을 text로 읽고 터미널에 로그한 뒤 JSON으로 파싱합니다.
+ * fetch 응답을 text로 읽고(개발 환경에서만 원문 일부를 로그) JSON으로 파싱합니다.
  * XML 오류 본문이면 파싱을 중단하고 예외를 던집니다.
  *
  * @param res fetch 응답
@@ -51,8 +51,12 @@ export const parsePublicDataFetchAsJson = async (
   context: string
 ): Promise<Record<string, unknown>> => {
   const raw = await res.text();
-  // 서버(라우트·RSC)에서는 터미널로, 브라우저에서는 개발자 도구 콘솔로 출력됩니다.
-  console.log(`[공공 API Raw] ${context}`, raw);
+  if (process.env.NODE_ENV === "development") {
+    const preview =
+      raw.length > 2000 ? `${raw.slice(0, 2000)}…(${raw.length}자)` : raw;
+    // 서버(라우트·RSC)에서는 터미널로, 브라우저에서는 개발자 도구 콘솔로 출력됩니다.
+    console.log(`[공공 API Raw] ${context}`, preview);
+  }
 
   const t = trimStart(raw);
   if (isPublicDataXmlErrorPayload(raw)) {

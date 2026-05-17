@@ -12,10 +12,22 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import type { BusinessRow } from "@/lib/sales/types";
+import {
+  MOCK_REVENUE_FILTER_FOOTNOTE,
+  MOCK_SALES_METRICS_BADGE_LABEL,
+} from "@/lib/commercial-api/mock-sales-metrics";
 
 export type RevenueFilter = "all" | "decline" | "growth";
 
 type Option = { value: string; label: string };
+
+/** 평가정보 API 응답 형태(대시보드 `EvlInfo`와 동일). */
+type SelectedBusinessEvl = {
+  gender: "남성" | "여성";
+  ageGroup: string;
+  establishedYear: number;
+  yearsInBusiness: number;
+};
 
 type FilterSidebarProps = {
   sidoOptions: Option[];
@@ -42,6 +54,52 @@ type FilterSidebarProps = {
   selectedId: string | null;
   onSelect: (id: string) => void;
   getPriority: (b: BusinessRow) => boolean;
+  /** 현재 선택된 업체에 대한 평가정보(상담 초안의 업력·연령과 동일 출처). */
+  selectedBusinessEvl: SelectedBusinessEvl | null;
+  /** 선택 업체 평가정보를 불러오는 중이면 true. */
+  selectedBusinessEvlLoading: boolean;
+  /** 모바일 하단 시트 등에서 방향 안내(우·중앙)를 중립 문구로 바꿉니다. */
+  embeddedMobile?: boolean;
+};
+
+/** 전월 대비 추세에 맞춰 상담 초안 2단계(기회/위기)와 동일 기준의 배지를 만듭니다. */
+const getSalesTrajectoryBadge = (revenueTrend: number) => {
+  if (revenueTrend > 0) {
+    return {
+      label: "매출 성장·수요 확대",
+      className: "border-brand-positive/50 text-brand-positive",
+    };
+  }
+  if (revenueTrend < 0) {
+    return {
+      label: "매출 하락·방어 구간",
+      className: "border-brand-negative/50 text-brand-negative",
+    };
+  }
+  return {
+    label: "매출 정체·방어 구간",
+    className: "border-amber-600/45 text-amber-800",
+  };
+};
+
+/** 평가정보 업력으로 상담 초안 1단계(공감) 분기와 동일 기준의 배지를 만듭니다. */
+const getTenureTrajectoryBadge = (yearsInBusiness: number) => {
+  if (yearsInBusiness >= 5) {
+    return {
+      label: "장기 운영·지역 신뢰",
+      className: "border-brand-primary/45 text-brand-primary",
+    };
+  }
+  if (yearsInBusiness < 1) {
+    return {
+      label: "신규 오픈",
+      className: "border-emerald-500/40 text-emerald-600",
+    };
+  }
+  return {
+    label: "성장기 운영",
+    className: "border-slate-500/35 text-slate-600",
+  };
 };
 
 /** 필터·업체 리스트(PRD 우측 패널). */
@@ -70,58 +128,23 @@ export const FilterSidebar = ({
   selectedId,
   onSelect,
   getPriority,
+  selectedBusinessEvl,
+  selectedBusinessEvlLoading,
+  embeddedMobile = false,
 }: FilterSidebarProps) => {
-  /** 업체 데이터로 간이 개인사업자 프로파일(연령대/업력)을 추정합니다. */
-  const getMockProfile = (b: BusinessRow) => {
-    const hash = Array.from(`${b.id}${b.name}`).reduce(
-      (acc, ch) => acc + ch.charCodeAt(0),
-      0
-    );
-    const ageGroups = ["20-30대", "30-40대", "40-50대", "50-60대"];
-    const years = hash % 10;
-    return {
-      ageGroup: ageGroups[hash % ageGroups.length],
-      yearsInBusiness: years,
-    };
-  };
-
-  /** PRD 기준 우선 영업 상태 배지를 계산합니다. */
-  const getStatusBadge = (b: BusinessRow) => {
-    const profile = getMockProfile(b);
-    if (profile.yearsInBusiness < 1) {
-      return {
-        label: "오픈 특수 (1년 미만)",
-        className: "border-emerald-500/40 text-emerald-600",
-      };
-    }
-    if (profile.yearsInBusiness >= 5 || b.revenueTrend < 0) {
-      return {
-        label: "매출 방어 필요 (5년 이상)",
-        className: "border-rose-500/40 text-rose-600",
-      };
-    }
-    if (b.revenueTrend >= 0) {
-      return {
-        label: "고수익 상권 진입",
-        className: "border-amber-500/40 text-amber-600",
-      };
-    }
-    return null;
-  };
-
   return (
-    <aside className="flex h-full min-h-0 flex-col overflow-hidden rounded-none border border-border bg-card shadow-sm ring-1 ring-foreground/5">
+    <aside className="flex h-full min-h-0 flex-col overflow-hidden rounded-none border border-border bg-card font-sans text-sm shadow-sm ring-1 ring-foreground/5">
       <div className="border-b border-border bg-brand-primary px-4 py-3 text-primary-foreground">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <Filter className="size-3.5 opacity-90" />
-            <h2 className="font-heading text-xs font-semibold tracking-widest uppercase">
+            <h2 className="text-xs font-semibold tracking-wide uppercase">
               필터 · 목록
             </h2>
           </div>
           <Badge
             variant="outline"
-            className="border-white/40 bg-white/10 text-[0.6rem] text-white"
+            className="border-white/40 bg-white/10 text-xs text-white"
             title="행정동/업종 분류와 업체 기본정보는 공공 원천 응답을 사용합니다."
           >
             실데이터
@@ -132,10 +155,10 @@ export const FilterSidebar = ({
       <div className="space-y-4 border-b border-border p-4">
         <div className="space-y-1.5">
           <div className="flex items-center justify-between gap-2">
-            <Label className="text-[0.65rem] tracking-widest uppercase text-muted-foreground">
+            <Label className="text-xs tracking-widest uppercase text-muted-foreground">
               행정동 (3단계)
             </Label>
-            <Badge variant="outline" className="text-[0.55rem]" title="공공 원천 응답값입니다.">
+            <Badge variant="outline" className="text-xs" title="공공 원천 응답값입니다.">
               실데이터
             </Badge>
           </div>
@@ -187,10 +210,10 @@ export const FilterSidebar = ({
 
         <div className="space-y-1.5">
           <div className="flex items-center justify-between gap-2">
-            <Label className="text-[0.65rem] tracking-widest uppercase text-muted-foreground">
+            <Label className="text-xs tracking-widest uppercase text-muted-foreground">
               업종 (3단계)
             </Label>
-            <Badge variant="outline" className="text-[0.55rem]" title="공공 원천 응답값입니다.">
+            <Badge variant="outline" className="text-xs" title="공공 원천 응답값입니다.">
               실데이터
             </Badge>
           </div>
@@ -241,7 +264,7 @@ export const FilterSidebar = ({
         </div>
 
         <div className="space-y-2">
-          <Label className="text-[0.65rem] tracking-widest uppercase text-muted-foreground">
+          <Label className="text-xs tracking-widest uppercase text-muted-foreground">
             매출 추세
           </Label>
           <div className="flex flex-wrap gap-1">
@@ -280,11 +303,21 @@ export const FilterSidebar = ({
               성장
             </Button>
           </div>
+          <p
+            className="rounded-md border border-amber-600/40 bg-amber-500/10 px-2 py-1.5 text-[11px] font-medium leading-snug text-amber-950 dark:border-amber-500/35 dark:bg-amber-950/25 dark:text-amber-100"
+            role="note"
+          >
+            <span className="sr-only">{MOCK_SALES_METRICS_BADGE_LABEL} </span>
+            {MOCK_REVENUE_FILTER_FOOTNOTE}
+            {embeddedMobile
+              ? " ‘상담·제안’ 탭 제안서 생성란 하단 안내와 동일 출처입니다."
+              : " 제안서 생성란 하단 안내와 동일 출처입니다."}
+          </p>
         </div>
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col px-2 pb-2 pt-2">
-        <p className="mb-2 px-2 text-[0.65rem] font-medium uppercase tracking-wider text-muted-foreground">
+        <p className="mb-2 px-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
           검색 결과 · {businesses.length}건
         </p>
         <ScrollArea className="min-h-0 flex-1 overflow-y-auto">
@@ -296,10 +329,18 @@ export const FilterSidebar = ({
             ) : (
               businesses.map((b) => {
                 const priority = getPriority(b);
-                const crisis = b.revenueTrend < 0;
                 const active = b.id === selectedId;
-                const profile = getMockProfile(b);
-                const statusBadge = getStatusBadge(b);
+                const salesBadge = getSalesTrajectoryBadge(b.revenueTrend);
+                const trendClass =
+                  b.revenueTrend < 0
+                    ? "font-semibold text-brand-negative"
+                    : b.revenueTrend > 0
+                      ? "font-semibold text-brand-positive"
+                      : "font-semibold text-muted-foreground";
+                const tenureBadge =
+                  active && selectedBusinessEvl && !selectedBusinessEvlLoading
+                    ? getTenureTrajectoryBadge(selectedBusinessEvl.yearsInBusiness)
+                    : null;
                 return (
                   <li key={b.id}>
                     <button
@@ -317,17 +358,14 @@ export const FilterSidebar = ({
                           {b.name || "상호 미상"}
                         </span>
                         <span
-                          className={`shrink-0 tabular-nums ${
-                            crisis
-                              ? "font-semibold text-brand-negative"
-                              : "text-brand-positive"
-                          }`}
+                          className={`shrink-0 tabular-nums ${trendClass}`}
+                          title="해당 상가 행의 전월 대비 매출 변동률(상담 초안·추세 게이지와 동일)"
                         >
                           {b.revenueTrend > 0 ? "+" : ""}
                           {b.revenueTrend}%
                         </span>
                       </div>
-                      <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[0.65rem] text-muted-foreground">
+                      <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
                         <span className="inline-flex items-center gap-1">
                           <Building2 className="size-3" />
                           {b.category || "업종 미상"}
@@ -335,41 +373,71 @@ export const FilterSidebar = ({
                         {priority ? (
                           <Badge
                             variant="outline"
-                            className="border-brand-positive/40 text-[0.55rem] text-brand-positive"
+                            className="border-brand-positive/40 text-xs text-brand-positive"
                           >
                             우선
                           </Badge>
                         ) : null}
-                        {statusBadge ? (
-                          <Badge
-                            variant="outline"
-                            className={`text-[0.55rem] ${statusBadge.className}`}
-                          >
-                            {statusBadge.label}
-                          </Badge>
-                        ) : null}
                         <Badge
                           variant="outline"
-                          className="text-[0.55rem]"
-                          title="정제·규칙 기반으로 생성된 가공 정보입니다."
+                          className={`text-xs ${salesBadge.className}`}
+                          title="상담 초안의 상황 분석 문장과 같은 기준입니다."
                         >
-                          가공데이터
+                          {salesBadge.label}
                         </Badge>
+                        {active && selectedBusinessEvlLoading ? (
+                          <Badge variant="outline" className="text-xs text-muted-foreground">
+                            평가정보 조회 중
+                          </Badge>
+                        ) : null}
+                        {tenureBadge ? (
+                          <Badge
+                            variant="outline"
+                            className={`text-xs ${tenureBadge.className}`}
+                            title="상담 초안 도입부(업력 공감)와 동일한 평가정보입니다."
+                          >
+                            {tenureBadge.label}
+                          </Badge>
+                        ) : null}
                         {b.id.startsWith("ext-") ? (
                           <Badge
                             variant="outline"
-                            className="text-[0.55rem] text-muted-foreground"
+                            className="text-xs text-muted-foreground"
                           >
                             공공
                           </Badge>
                         ) : null}
                       </div>
-                      <p className="mt-0.5 truncate text-[0.65rem] text-muted-foreground">
+                      <p className="mt-0.5 truncate text-xs text-muted-foreground">
                         {b.address || "주소 정보 없음"}
                       </p>
-                      <p className="mt-0.5 text-[0.6rem] text-muted-foreground">
-                        대표자 연령대: {profile.ageGroup}
-                      </p>
+                      {active ? (
+                        <p className="mt-0.5 text-xs text-muted-foreground">
+                          {selectedBusinessEvlLoading ? (
+                            <span>대표자 평가정보를 불러오는 중입니다…</span>
+                          ) : selectedBusinessEvl ? (
+                            <span>
+                              대표자 {selectedBusinessEvl.gender} ·{" "}
+                              {selectedBusinessEvl.ageGroup} · 업력{" "}
+                              {selectedBusinessEvl.yearsInBusiness}년
+                              <span className="ml-1 text-[10px] text-muted-foreground/90">
+                                (평가정보·상담 초안과 동일)
+                              </span>
+                            </span>
+                          ) : (
+                            <span>
+                              평가정보가 없습니다. 상담 초안의 공감 문장은 업력 없이
+                              구성됩니다.
+                            </span>
+                          )}
+                        </p>
+                      ) : (
+                        <p className="mt-0.5 text-[11px] text-muted-foreground/80">
+                          {embeddedMobile
+                            ? "목록의 %는 해당 상가의 전월 대비 추세이며, 상담 초안·매출 추세 카드와 동일합니다."
+                            : "우측 퍼센트는 해당 상가의 전월 대비 추세이며, 상담 초안·추세 카드와 동일합니다."}
+                        </p>
+                      )}
                     </button>
                   </li>
                 );
@@ -380,12 +448,14 @@ export const FilterSidebar = ({
       </div>
 
       <Separator />
-      <p className="px-4 py-2 text-[0.6rem] leading-snug text-muted-foreground">
+      <p className="px-4 py-2 text-xs leading-snug text-muted-foreground">
         매출 하락 + 공동주택 증가율 10% 초과 시 &quot;우선 영업 후보&quot;로
         분류합니다. (PRD 5.1)
       </p>
-      <p className="border-t border-border px-4 py-2 text-[0.6rem] leading-snug text-muted-foreground">
-        상태 배지와 대표자 속성은 규칙 기반 가공 데이터입니다.
+      <p className="border-t border-border px-4 py-2 text-xs leading-snug text-muted-foreground">
+        {embeddedMobile
+          ? "목록의 %는 각 상가 행의 전월 대비 매출 변동률이며, 상담 초안·매출 추세와 동일합니다. 선택한 업체의 업력·연령은 평가정보 API 결과로만 표시합니다."
+          : "목록의 %는 각 상가 행의 전월 대비 매출 변동률이며, 중앙 &quot;매출 추세&quot;·상담 초안과 동일합니다. 선택한 업체의 업력·연령은 평가정보 API 결과로만 표시합니다."}
       </p>
     </aside>
   );

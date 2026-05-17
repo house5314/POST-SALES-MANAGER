@@ -1,5 +1,6 @@
 import type { PostalQuote } from "@/lib/postal-calc";
 import type { BusinessRow, MarketStatRow } from "@/lib/sales/types";
+import { MOCK_PROPOSAL_PRINT_DISCLAIMER } from "@/lib/commercial-api/mock-sales-metrics";
 import { buildSbizIframeSrc } from "@/lib/sbiz-iframe-urls";
 
 type ProposalPrintExtras = {
@@ -7,6 +8,15 @@ type ProposalPrintExtras = {
   aptTargets?: { name: string; households: number }[];
   /** PRD5 부록 iframe용 소상공인365 certKey(NEXT_PUBLIC_SBIZ_CERT_KEY). */
   sbizCertKey?: string;
+  /**
+   * 화면 `/api/commercial/getEvlInfo`와 동일한 업력(제안서 템플릿 분기·헤더 표기).
+   * 없으면 업력만 시연용 시드 추정으로 대체합니다.
+   */
+  evlForProposal?: { yearsInBusiness: number } | null;
+  /**
+   * 업종 필터의 대분류명(화면과 동일) — 제안서 템플릿이 공공 상가 `indsLclsCd`·명칭과 맞물리도록 전달합니다.
+   */
+  industryLargeLabel?: string | null;
 };
 
 type TemplateType = "A" | "B" | "C";
@@ -30,25 +40,62 @@ const escapeHtml = (value: string) =>
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
 
-/** 업종 텍스트와 추정 업력으로 제안서 템플릿 유형을 선택합니다. */
-const resolveTemplateType = (b: BusinessRow, yearsInBusiness: number) => {
+/**
+ * 상가(상권)정보 업종 대분류 선두 1자 — 음식·소매가 아닌 서비스 계열(생활밀착형 템플릿 C).
+ * 세부 코드표는 공공데이터포털 「상가(상권)정보 업종코드」 자료와 대조합니다.
+ */
+const SBIZ_SERVICE_INDS_LCLS_FIRST = new Set([
+  "L",
+  "M",
+  "N",
+  "P",
+  "Q",
+  "R",
+  "S",
+]);
+
+/** 업종 대분류명·`indsLclsCd`·소분류 키워드·업력으로 제안서 템플릿 유형을 선택합니다. */
+const resolveTemplateType = (
+  b: BusinessRow,
+  yearsInBusiness: number,
+  industryLargeLabel?: string | null
+) => {
+  const largeRaw = (industryLargeLabel ?? "").normalize("NFKC").trim();
+  const firstClass = (b.indsLclsCd ?? "").trim().toUpperCase().charAt(0);
   const category = (b.category ?? "").toLowerCase();
-  const isFood =
+
+  const isFoodLarge =
+    largeRaw.includes("외식") ||
+    largeRaw.includes("음식") ||
+    firstClass === "I";
+  const isRetailLarge =
+    largeRaw.includes("도소매") ||
+    largeRaw.includes("소매") ||
+    firstClass === "G";
+  const isServiceLarge =
+    largeRaw.includes("서비스") ||
+    (firstClass ? SBIZ_SERVICE_INDS_LCLS_FIRST.has(firstClass) : false);
+
+  const isFoodCategory =
     category.includes("외식") ||
     category.includes("치킨") ||
     category.includes("카페") ||
     category.includes("음식");
-  const isRetail =
+  const isRetailCategory =
     category.includes("도소매") ||
     category.includes("소매") ||
     category.includes("의류") ||
     category.includes("귀금속");
-  if (isFood || b.revenueTrend > 8) return "A";
-  if (isRetail || yearsInBusiness >= 5) return "B";
+
+  if (isFoodLarge || isFoodCategory) return "A";
+  if (isRetailLarge || isRetailCategory) return "B";
+  if (isServiceLarge) return "C";
+  if (b.revenueTrend > 8) return "A";
+  if (yearsInBusiness >= 5) return "B";
   return "C";
 };
 
-/** 사업자 식별값 기준으로 업력을 안정적으로 추정합니다. */
+/** 평가정보가 없을 때만 사업자 식별값 기준으로 업력을 시연 추정합니다. */
 const estimateYearsInBusiness = (b: BusinessRow) => {
   const seed = Array.from(`${b.id}:${b.name}`).reduce(
     (acc, ch) => acc + ch.charCodeAt(0),
@@ -57,14 +104,19 @@ const estimateYearsInBusiness = (b: BusinessRow) => {
   return 1 + (seed % 9);
 };
 
-/** 템플릿 타입별 컨설팅 문구와 SWOT/ROI를 구성합니다. */
+/**
+ * 템플릿 타입별 컨설팅 문구와 SWOT/ROI를 구성합니다.
+ * @param yearsInBusiness 템플릿 분기용 업력(평가정보 또는 추정)
+ * @param industryLargeLabel 화면 업종 대분류명(있으면 템플릿이 필터 선택과 일치)
+ */
 const buildTemplateContent = (
   b: BusinessRow,
   m: MarketStatRow | undefined,
-  mailQuantity: number
+  mailQuantity: number,
+  yearsInBusiness: number,
+  industryLargeLabel?: string | null
 ): TemplateContent => {
-  const yearsInBusiness = estimateYearsInBusiness(b);
-  const type = resolveTemplateType(b, yearsInBusiness);
+  const type = resolveTemplateType(b, yearsInBusiness, industryLargeLabel);
   if (type === "A") {
     return {
       type,
@@ -195,7 +247,7 @@ const printHtmlViaPopup = (html: string): boolean => {
   }
 };
 
-/** 제안서 인쇄/PDF 출력 문서를 PRD3 구조로 생성합니다. */
+/** 제안서 인쇄/PDF 출력 문서를 PRD3 구조로 생성합니다. `extras.evlForProposal`이 있으면 업력·템플릿 분기가 화면 평가정보와 동일합니다. */
 export const openProposalPrint = (
   b: BusinessRow,
   m: MarketStatRow | undefined,
@@ -203,7 +255,25 @@ export const openProposalPrint = (
   industryAvgStat?: { avgSalesAmount: number; avgSalesPerArea: number } | null,
   extras?: ProposalPrintExtras | null
 ) => {
-  const template = buildTemplateContent(b, m, mailQuantity);
+  const yearsFromEvl = extras?.evlForProposal?.yearsInBusiness;
+  const hasEvlYears =
+    yearsFromEvl != null &&
+    Number.isFinite(yearsFromEvl) &&
+    yearsFromEvl >= 0;
+  const yearsInBusinessForTemplate = hasEvlYears
+    ? Math.max(0, Math.floor(yearsFromEvl))
+    : estimateYearsInBusiness(b);
+  const tenureSourceLabel = hasEvlYears
+    ? "평가정보 API(화면과 동일)"
+    : "평가정보 미수신·시연 추정";
+
+  const template = buildTemplateContent(
+    b,
+    m,
+    mailQuantity,
+    yearsInBusinessForTemplate,
+    extras?.industryLargeLabel ?? null
+  );
   const seed = Array.from(`${b.id}:${b.regionCode}`).reduce(
     (acc, ch) => acc + ch.charCodeAt(0),
     0
@@ -326,17 +396,27 @@ export const openProposalPrint = (
     <header class="header">
       <h1 class="title">생활정보홍보우편 맞춤형 컨설팅 리포트</h1>
       <p class="subtitle">제안서 유형: ${template.title}<span class="badge">자동 분기</span></p>
+      <div style="margin:10px 0 12px;padding:10px 12px;border:1px solid #d97706;background:#fffbeb;font-size:11px;line-height:1.5;color:#78350f;border-radius:4px;">
+        ${escapeHtml(MOCK_PROPOSAL_PRINT_DISCLAIMER)}
+      </div>
       <div class="grid">
         <div><strong>상호명</strong> ${escapeHtml(b.name || "-")}</div>
         <div><strong>업종</strong> ${escapeHtml(b.category || "-")}</div>
         <div><strong>주소</strong> ${escapeHtml(b.address || "-")}</div>
         <div><strong>상권코드</strong> ${escapeHtml(m?.regionCode ?? b.regionCode ?? "-")}</div>
+        <div><strong>업력</strong> ${yearsInBusinessForTemplate}년</div>
+        <div><strong>업력 출처</strong> ${escapeHtml(tenureSourceLabel)}</div>
       </div>
     </header>
 
     <section class="section">
       <h2>Section 1. 상권 데이터 진단</h2>
       <p>${template.diagnosis}</p>
+      ${
+        m?.metricsSourceLabel
+          ? `<p class="muted" style="margin:8px 0 0;font-size:11px;">배후 세대·유동인구 등 KPI 출처: ${escapeHtml(m.metricsSourceLabel)}</p>`
+          : ""
+      }
       <div class="kpi">
         <div>면적당 평균매출<strong>${diagnosisRows.areaSales}</strong></div>
         <div>유동 인구<strong>${diagnosisRows.floatingPop}</strong></div>

@@ -4,7 +4,10 @@ import { buildMockRevenueTrend } from "@/lib/commercial-api/mock-sales-metrics";
 import { fetchStoreListInDong } from "@/lib/commercial-api/semas-store";
 import type { BusinessRow } from "@/lib/sales/types";
 
-/** 법정동코드 입력을 시군구 조회 + 서버 필터링으로 우회하는 상가 조회 프록시. */
+/**
+ * 법정동코드 입력을 시군구 조회 + 서버 필터링으로 우회하는 상가 조회 프록시.
+ * 호출 빈도·일일 한도는 공공데이터포털 계약을 따릅니다(`docs/operations-data-quota.md`).
+ */
 export const GET = async (req: NextRequest) => {
   /** WGS84(한반도) 범위인지 검증합니다. */
   const isKoreaWgs84 = (lat: number, lng: number) => {
@@ -89,6 +92,8 @@ export const GET = async (req: NextRequest) => {
           row.indsLclsCd ?? indL ?? indsLclsCd
         ),
         indsLclsCd: (row.indsLclsCd ?? indL ?? indsLclsCd ?? null) as string | null,
+        indsMclsCd: (row.indsMclsCd ?? "").trim() || null,
+        indsSclsCd: (row.indsSclsCd ?? "").trim() || null,
       };
     });
     const normalized: BusinessRow[] = mapped.map((row) => {

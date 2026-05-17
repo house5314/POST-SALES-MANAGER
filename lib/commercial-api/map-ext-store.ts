@@ -26,5 +26,7 @@ export const mapSbizStoreToBusinessRow = (
     lng: Number.isFinite(lng) ? lng : 0,
     revenueTrend: 0,
     indsLclsCd: indsLclsCd ?? s.indsLclsCd ?? null,
+    indsMclsCd: (s.indsMclsCd ?? "").trim() || null,
+    indsSclsCd: (s.indsSclsCd ?? "").trim() || null,
   };
 };
