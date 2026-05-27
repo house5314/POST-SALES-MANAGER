@@ -208,6 +208,22 @@ if (googleModel) {
     "GOOGLE_GENERATIVE_AI_MODEL: 미설정 — 코드 기본값(gemini-2.0-flash) 사용."
   );
 }
+const googleTemp = env.get("GOOGLE_GENERATIVE_AI_TEMPERATURE")?.trim();
+if (googleTemp) {
+  const n = Number(googleTemp);
+  const capped = Number.isFinite(n) ? Math.min(0.2, Math.max(0, n)) : 0.2;
+  console.log(
+    "GOOGLE_GENERATIVE_AI_TEMPERATURE:",
+    googleTemp,
+    "→ 실제 호출 상한:",
+    capped,
+    "(코드 최대 0.2)"
+  );
+} else {
+  console.log(
+    "GOOGLE_GENERATIVE_AI_TEMPERATURE: 미설정 — AI assist 기본 0.2 사용."
+  );
+}
 
 console.log("\n검증 완료.");
 process.exit(0);

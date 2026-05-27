@@ -20,6 +20,7 @@ import {
   MOCK_REVENUE_TREND_GAUGE_DISCLAIMER,
   MOCK_SALES_METRICS_BADGE_LABEL,
 } from "@/lib/commercial-api/mock-sales-metrics";
+import { SAFE_MODE_DEFAULT_MAIL_QTY } from "@/lib/operations/safe-mode";
 import { getSbizCertKeyPublic } from "@/lib/sbiz-iframe-urls";
 import { cn } from "@/lib/utils";
 import type { MolitAptComplex } from "@/lib/molit/types";
@@ -55,6 +56,8 @@ type InsightCenterPanelProps = {
    * 내부 이중 스크롤을 줄입니다.
    */
   singleScrollSurface?: boolean;
+  /** 공공 API 장애·지연 시 기본 견적 부수로 표시 중이면 true. */
+  safeMode?: boolean;
 };
 
 /** 전월 대비 매출 변동률을 막대 스케일로 시각화합니다. */
@@ -140,6 +143,7 @@ export const InsightCenterPanel = ({
   apartments,
   selectedAptIds,
   singleScrollSurface = false,
+  safeMode = false,
 }: InsightCenterPanelProps) => {
   if (!business) {
     return (
@@ -164,12 +168,6 @@ export const InsightCenterPanel = ({
   /** 전월 대비 매출 변동률(상권·업체 지표)을 기준으로 기회/위기 멘트를 구성합니다. */
   const revenuePct = business.revenueTrend;
   const revenuePctLabel = `${revenuePct > 0 ? "+" : ""}${revenuePct}%`;
-
-  /** 1가구당 예상 비용(원, 반올림). 부수 0이면 표시용 0. */
-  const perHouseholdWon =
-    effectiveMailQty > 0
-      ? Math.round(postalQuote.finalTotalWon / effectiveMailQty)
-      : 0;
 
   /** [1] 도입: 업력 기반 공감(업력은 평균·정수 연차 기준). */
   const empathyIntro =
@@ -199,8 +197,9 @@ export const InsightCenterPanel = ({
     .filter(Boolean)
     .join(" ");
 
-  /** [4] 비용·ROI: 기준요금 → 감액 → 최종 + 가구당 단가 */
-  const roiLine = `기본 요금 **${postalQuote.baseTotalWon.toLocaleString("ko-KR")}원**에서 특별 감액을 적용받아 최종 **${postalQuote.finalTotalWon.toLocaleString("ko-KR")}원**에 진행 가능합니다. 이는 1가구당 약 **${perHouseholdWon.toLocaleString("ko-KR")}원** 수준으로 매우 합리적입니다.`;
+  /** [4] 우편물 형태·단가 안내(접착형) */
+  const roiLine =
+    "'접착형'은 통당 360원이며, 용지 1장(3단 접지, 6면)의 1면에 홍보 내용을 인쇄하여, 3단으로 접어 접착방식으로 봉합한 우편물입니다. 500부 기준으로 180,000원의 비용이 발생하고 추가옵션에 따라 비용이 달라질 수 있습니다.";
 
   /** [5] 액션: 마무리 */
   const actionClose = `검토해 보시고, **${effectiveMailQty.toLocaleString("ko-KR")}부** 안으로 시안과 발송 일정을 준비해 드리겠습니다.`;
@@ -411,9 +410,11 @@ export const InsightCenterPanel = ({
               <dd className="text-sm leading-relaxed text-foreground">
                 {effectiveMailQty.toLocaleString("ko-KR")}부
                 <span className="mt-1 block text-xs text-muted-foreground">
-                  {aptTargetsSummary
-                    ? "지도에서 선택한 국토부 단지 세대를 반영했습니다."
-                    : "지역 수요 규모를 반영한 산출입니다."}
+                  {safeMode
+                    ? `안전 모드: 공공 API 장애·지연으로 기본 ${SAFE_MODE_DEFAULT_MAIL_QTY.toLocaleString("ko-KR")}부 기준 견적을 표시합니다.`
+                    : aptTargetsSummary
+                      ? "지도에서 선택한 국토부 단지 세대를 반영했습니다."
+                      : "지역 수요 규모를 반영한 산출입니다."}
                 </span>
               </dd>
             </div>

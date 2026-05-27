@@ -3,6 +3,10 @@ import { generateText } from "ai";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import {
+  buildAiAssistSystemPrompt,
+  resolveAiAssistTemperature,
+} from "@/lib/ai/assist-model-params";
 import { logAiRouteEvent } from "@/lib/ai/ai-request-logger";
 import { getGoogleGenAiClientConfig } from "@/lib/ai/google-genai-config";
 import { maskSensitiveTextForModel } from "@/lib/ai/mask-sensitive-text";
@@ -12,12 +16,8 @@ const bodySchema = z.object({
   prompt: z.string().min(1).max(12_000),
 });
 
-const SYSTEM_PROMPT = `당신은 대한민국 우체국 생활정보홍보우편 B2B 영업을 돕는 보조 역할입니다.
-개인·사업자 식별 정보는 입력에서 마스킹되었을 수 있습니다. 마스킹된 토큰([전화], [이메일] 등)은 복원하지 마세요.
-답변은 한국어로, 짧고 실무에 맞게(불필요한 장문 금지) 작성하세요.`;
-
 /**
- * 마스킹·로그 정책을 적용한 뒤 선택적으로 Gemini를 호출합니다(API 키 없으면 비활성 응답).
+ * 마스킹·로그·temperature 상한·System Prompt(우편 요금표) 정책을 적용한 뒤 Gemini를 호출합니다(API 키 없으면 비활성).
  * 내부망·DMZ 프록시는 `GOOGLE_GENERATIVE_AI_BASE_URL` 로 지정합니다.
  */
 export const POST = async (req: Request) => {
@@ -85,10 +85,12 @@ export const POST = async (req: Request) => {
       apiKey,
       ...(baseURL ? { baseURL } : {}),
     });
+    const temperature = resolveAiAssistTemperature();
     const { text, usage } = await generateText({
       model: googleProvider(modelId),
-      system: SYSTEM_PROMPT,
+      system: buildAiAssistSystemPrompt(),
       prompt: masked,
+      temperature,
     });
 
     logAiRouteEvent({
@@ -107,6 +109,7 @@ export const POST = async (req: Request) => {
       meta: {
         modelId,
         usesCustomGenerativeAiBase,
+        temperature,
       },
     });
   } catch (e) {

@@ -48,7 +48,13 @@ import {
 import { resolveLegalDongForMolit } from "@/lib/sales/resolve-legal-dong-for-molit";
 import { isPriorityLead } from "@/lib/sales/priority-lead";
 import type { BusinessRow, MarketStatRow } from "@/lib/sales/types";
+import { fetchPublicApiJson } from "@/lib/api/public-api-fetch";
 import { DATA_GOVERNANCE_FOOTER } from "@/lib/operations/governance-copy";
+import {
+  SAFE_MODE_BANNER_DETAIL,
+  SAFE_MODE_BANNER_TITLE,
+  SAFE_MODE_DEFAULT_MAIL_QTY,
+} from "@/lib/operations/safe-mode";
 
 type IndsLarge = { indsLclsCd: string; indsLclsNm: string };
 type Option = { value: string; label: string };
@@ -349,6 +355,10 @@ export const SalesNavigatorDashboard = () => {
   const marketStatsFetchSeq = useRef(0);
   const [marketStatsLoading, setMarketStatsLoading] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
+  /** 공공 API 장애·지연 시 기본 견적(1,200부)으로 전환합니다. */
+  const [safeMode, setSafeMode] = useState(false);
+  /** 타임아웃·캐시 재사용 등 부가 안내(오류 배너와 별도). */
+  const [apiNotice, setApiNotice] = useState<string | null>(null);
   const [evlInfo, setEvlInfo] = useState<EvlInfo | null>(null);
   /** `evlInfo`가 어느 `business.id` 조회 결과인지 표시해, 선택이 바뀐 뒤에도 이전 평가정보가 노출되지 않게 합니다. */
   const [evlFetchedForId, setEvlFetchedForId] = useState<string | null>(null);
@@ -697,47 +707,54 @@ export const SalesNavigatorDashboard = () => {
     });
 
     const seq = ++marketStatsFetchSeq.current;
+    const marketStatsUrl = "/api/commercial/market-stats";
+    const marketStatsBody = JSON.stringify({ regions });
     void (async () => {
-      try {
-        const res = await fetch("/api/commercial/market-stats", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ regions }),
-        });
-        const data = (await res.json()) as {
-          ok: boolean;
-          byRegion?: Record<string, MarketStatRow>;
-          message?: string;
-        };
-        if (seq !== marketStatsFetchSeq.current) return;
-        if (!data.ok || !data.byRegion) {
-          if (process.env.NODE_ENV === "development" && data.message) {
-            console.error("[상권 요약]", data.message);
-          }
-          setMarketByRegion({});
-          return;
+      const result = await fetchPublicApiJson<{
+        ok: boolean;
+        byRegion?: Record<string, MarketStatRow>;
+        message?: string;
+      }>(marketStatsUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: marketStatsBody,
+      });
+
+      if (seq !== marketStatsFetchSeq.current) return;
+
+      if (result.fromCache && result.message) {
+        setApiNotice((prev) => prev ?? result.message ?? null);
+      }
+
+      const data = result.data;
+      if (!data?.ok || !data.byRegion) {
+        if (process.env.NODE_ENV === "development" && data?.message) {
+          console.error("[상권 요약]", data?.message);
         }
-        const incoming = data.byRegion;
-        setMarketByRegion(() => {
-          const next: Record<string, MarketStatRow> = {};
-          for (const code of codes) {
-            const row = incoming[code];
-            if (row) next[code] = row;
-          }
-          return next;
-        });
-      } catch (e) {
-        if (seq !== marketStatsFetchSeq.current) return;
-        if (process.env.NODE_ENV === "development") {
-          console.error("[상권 요약]", e);
+        if (!result.fromCache) {
+          setSafeMode(true);
         }
-        setMarketByRegion({});
-      } finally {
         if (seq === marketStatsFetchSeq.current) {
           queueMicrotask(() => {
             setMarketStatsLoading(false);
           });
         }
+        return;
+      }
+
+      const incoming = data.byRegion;
+      setMarketByRegion(() => {
+        const next: Record<string, MarketStatRow> = {};
+        for (const code of codes) {
+          const row = incoming[code];
+          if (row) next[code] = row;
+        }
+        return next;
+      });
+      if (seq === marketStatsFetchSeq.current) {
+        queueMicrotask(() => {
+          setMarketStatsLoading(false);
+        });
       }
     })();
   }, [
@@ -759,12 +776,15 @@ export const SalesNavigatorDashboard = () => {
 
   /** 국토부 단지 선택이 있으면 세대 합산을 우선하고, 없으면 기존 추정 부수를 씁니다. */
   const effectiveMailQty = useMemo(() => {
+    const useSafeDefault =
+      safeMode && (!aptRows.length || selectedAptIds.size === 0);
+    if (useSafeDefault) return SAFE_MODE_DEFAULT_MAIL_QTY;
     if (!aptRows.length || selectedAptIds.size === 0) return mailQuantity;
     const sum = aptRows
       .filter((a) => selectedAptIds.has(a.id))
       .reduce((acc, a) => acc + a.households, 0);
     return sum > 0 ? sum : mailQuantity;
-  }, [aptRows, mailQuantity, selectedAptIds]);
+  }, [aptRows, mailQuantity, safeMode, selectedAptIds]);
 
   const postalQuote = useMemo(
     () => calculatePostalQuote(effectiveMailQty),
@@ -1115,45 +1135,48 @@ export const SalesNavigatorDashboard = () => {
       setApiError(null);
       return;
     }
-    try {
-      const q = new URLSearchParams();
-      q.set("dong", effectiveDong);
-      if (selectedIndLarge) q.set("indL", selectedIndLarge);
-      if (selectedIndMedium) q.set("indM", selectedIndMedium);
-      if (selectedIndSmall) q.set("indS", selectedIndSmall);
-      if (indsLclsFilter !== "all") q.set("indsLclsCd", indsLclsFilter);
-      const res = await fetch(`/api/commercial/stores?${q.toString()}`);
-      const data = (await res.json()) as {
-        ok: boolean;
-        rows?: BusinessRow[];
-        message?: string;
-      };
-      if (!data.ok) {
-        const msg = data.message ?? "공공 상가 조회에 실패했습니다.";
-        if (process.env.NODE_ENV === "development") {
-          console.error("[공공 API · 상가업소]", msg);
-        }
-        setApiError(msg);
-        return;
+    const q = new URLSearchParams();
+    q.set("dong", effectiveDong);
+    if (selectedIndLarge) q.set("indL", selectedIndLarge);
+    if (selectedIndMedium) q.set("indM", selectedIndMedium);
+    if (selectedIndSmall) q.set("indS", selectedIndSmall);
+    if (indsLclsFilter !== "all") q.set("indsLclsCd", indsLclsFilter);
+    const url = `/api/commercial/stores?${q.toString()}`;
+
+    const result = await fetchPublicApiJson<{
+      ok: boolean;
+      rows?: BusinessRow[];
+      message?: string;
+    }>(url);
+
+    setApiNotice(result.fromCache && result.message ? result.message : null);
+
+    const data = result.data;
+    if (!data?.ok) {
+      const msg =
+        data?.message ?? result.message ?? "공공 상가 조회에 실패했습니다.";
+      if (process.env.NODE_ENV === "development") {
+        console.error("[공공 API · 상가업소]", msg);
       }
-      const rows = data.rows ?? [];
-      setOverlayStores(rows);
-      const firstWithPoint = rows.find(
-        (s) =>
-          Number.isFinite(s.lat) &&
-          Number.isFinite(s.lng) &&
-          !(s.lat === 0 && s.lng === 0)
-      );
-      if (firstWithPoint) {
-        setBusinessMorphZoom(ZOOM_AFTER_AUTO_FIRST_STORE);
-        setPickedId(firstWithPoint.id);
-      }
-      setApiError(null);
-    } catch (e) {
-      setApiError(
-        e instanceof Error ? e.message : "공공 상가 조회 중 오류가 났습니다."
-      );
+      setApiError(msg);
+      setSafeMode(true);
+      return;
     }
+
+    const rows = data.rows ?? [];
+    setOverlayStores(rows);
+    const firstWithPoint = rows.find(
+      (s) =>
+        Number.isFinite(s.lat) &&
+        Number.isFinite(s.lng) &&
+        !(s.lat === 0 && s.lng === 0)
+    );
+    if (firstWithPoint) {
+      setBusinessMorphZoom(ZOOM_AFTER_AUTO_FIRST_STORE);
+      setPickedId(firstWithPoint.id);
+    }
+    setApiError(null);
+    setSafeMode(false);
   }, [
     indsLclsFilter,
     isDemo,
@@ -1229,6 +1252,27 @@ export const SalesNavigatorDashboard = () => {
         </p>
       </header>
 
+      {safeMode ? (
+        <div
+          className="mx-4 mt-4 rounded-none border border-sky-500/45 bg-sky-500/10 px-4 py-3 text-sm text-sky-950 dark:border-sky-400/40 dark:bg-sky-950/40 dark:text-sky-50 lg:mx-8"
+          role="status"
+        >
+          <p className="font-semibold">{SAFE_MODE_BANNER_TITLE}</p>
+          <p className="mt-1 text-xs leading-relaxed opacity-95">
+            {SAFE_MODE_BANNER_DETAIL}
+          </p>
+        </div>
+      ) : null}
+
+      {apiNotice && !apiError ? (
+        <div
+          className="mx-4 mt-2 rounded-none border border-border bg-muted/50 px-4 py-2 text-xs text-muted-foreground lg:mx-8"
+          role="status"
+        >
+          {apiNotice}
+        </div>
+      ) : null}
+
       {apiError ? (
         <div
           className="mx-4 mt-4 rounded-none border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-100 lg:mx-8"
@@ -1273,6 +1317,7 @@ export const SalesNavigatorDashboard = () => {
               selectedDongLabel={selectedDongLabel}
               apartments={aptRows}
               selectedAptIds={selectedAptIds}
+              safeMode={safeMode}
             />
           </div>
           <div className="hidden min-h-0 lg:block lg:w-[20%]">
@@ -1395,6 +1440,7 @@ export const SalesNavigatorDashboard = () => {
                 apartments={aptRows}
                 selectedAptIds={selectedAptIds}
                 singleScrollSurface
+                safeMode={safeMode}
               />
             </TabsContent>
             <TabsContent

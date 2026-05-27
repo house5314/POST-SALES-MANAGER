@@ -22,6 +22,20 @@ const DISCOUNT_BRACKETS: { minQty: number; pct: number }[] = [
   { minQty: 500, pct: 10 },
 ];
 
+/** AI System Prompt에 넣을 우편 요금표 요약(앱 견적 로직과 동일 출처). */
+export const formatPostalRateTableForAiSystem = (): string => {
+  const bracketLines = DISCOUNT_BRACKETS.map(
+    (b) =>
+      `- 발송 ${b.minQty.toLocaleString("ko-KR")}부 이상: 특별 감액 ${b.pct}%`
+  ).join("\n");
+  return [
+    `[제공 우편 요금표 — PoC 참고치, 최종 청구는 우체국 확정 견적 기준]`,
+    `- 기준 부당 단가: ${REFERENCE_UNIT_PRICE.toLocaleString("ko-KR")}원`,
+    `- 기준 총액 = 부수 × 부당 단가, 최종액 = 기준 총액 × (100 - 감액률) / 100`,
+    bracketLines,
+  ].join("\n");
+};
+
 /** 발송 부수에 따른 특별 감액률을 결정합니다. */
 export const resolvePostalDiscountPct = (quantity: number): number => {
   const q = Math.max(0, Math.floor(quantity));

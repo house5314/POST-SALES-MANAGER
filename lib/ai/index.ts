@@ -9,3 +9,8 @@ export {
   getGoogleGenAiClientConfig,
   type GoogleGenAiClientConfig,
 } from "@/lib/ai/google-genai-config";
+export {
+  AI_ASSIST_TEMPERATURE_MAX,
+  buildAiAssistSystemPrompt,
+  resolveAiAssistTemperature,
+} from "@/lib/ai/assist-model-params";
