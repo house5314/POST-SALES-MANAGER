@@ -10,6 +10,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { AiInsightSummaryCard } from "@/components/sales-navigator/AiInsightSummaryCard";
 import { openProposalPrint } from "@/lib/open-proposal-print";
 import {
   MARKET_STAT_METRICS_SOURCE_LABEL,
@@ -59,6 +60,8 @@ type InsightCenterPanelProps = {
   singleScrollSurface?: boolean;
   /** 공공 API 장애·지연 시 기본 견적 부수로 표시 중이면 true. */
   safeMode?: boolean;
+  /** 제안서(인쇄/PDF) 생성 직후 PoC KPI 갱신용. */
+  onProposalIssued?: () => void;
 };
 
 /** 전월 대비 매출 변동률을 막대 스케일로 시각화합니다. */
@@ -145,6 +148,7 @@ export const InsightCenterPanel = ({
   selectedAptIds,
   singleScrollSurface = false,
   safeMode = false,
+  onProposalIssued,
 }: InsightCenterPanelProps) => {
   if (!business) {
     return (
@@ -283,6 +287,15 @@ export const InsightCenterPanel = ({
           </ul>
         </div>
       </div>
+
+      <AiInsightSummaryCard
+        business={business}
+        market={market}
+        effectiveMailQty={effectiveMailQty}
+        yearsInBusiness={evlInfo?.yearsInBusiness}
+        isPriority={isPriority}
+        regionLabel={resolvedRegionLabel}
+      />
 
       <Card size="sm" className="shrink-0 border-brand-primary/15 py-3 font-sans text-sm shadow-sm ring-brand-primary/10">
         <CardHeader className="space-y-1.5 px-4 pb-2 pt-0 sm:px-5">
@@ -435,19 +448,29 @@ export const InsightCenterPanel = ({
             <Button
               type="button"
               className="w-full shrink-0 bg-brand-accent text-white hover:bg-brand-accent/90 sm:w-auto sm:min-w-[11rem]"
-              onClick={() =>
-                openProposalPrint(business, market, effectiveMailQty, industryAvgStat, {
-                  postalQuote,
-                  aptTargets: apartments
-                    .filter((a) => selectedAptIds.has(a.id))
-                    .map((a) => ({ name: a.name, households: a.households })),
-                  sbizCertKey: getSbizCertKeyPublic(),
-                  evlForProposal: evlInfo
-                    ? { yearsInBusiness: evlInfo.yearsInBusiness }
-                    : null,
-                  industryLargeLabel: selectedLargeName.trim() || null,
-                })
-              }
+              onClick={() => {
+                openProposalPrint(
+                  business,
+                  market,
+                  effectiveMailQty,
+                  industryAvgStat,
+                  {
+                    postalQuote,
+                    aptTargets: apartments
+                      .filter((a) => selectedAptIds.has(a.id))
+                      .map((a) => ({
+                        name: a.name,
+                        households: a.households,
+                      })),
+                    sbizCertKey: getSbizCertKeyPublic(),
+                    evlForProposal: evlInfo
+                      ? { yearsInBusiness: evlInfo.yearsInBusiness }
+                      : null,
+                    industryLargeLabel: selectedLargeName.trim() || null,
+                  }
+                );
+                onProposalIssued?.();
+              }}
             >
               <FileDown className="size-3.5" data-icon="inline-start" />
               제안서 생성 (인쇄/PDF)

@@ -1,4 +1,8 @@
 import { buildAdhesivePostalPricingParagraph } from "@/lib/postal-adhesive-pricing";
+import {
+  PROPOSAL_ROI_SIMULATION_DISCLAIMER,
+  buildProposalRoiNarrative,
+} from "@/lib/proposal-roi-assumptions";
 import type { PostalQuote } from "@/lib/postal-calc";
 import type { BusinessRow, MarketStatRow } from "@/lib/sales/types";
 import { MOCK_PROPOSAL_PRINT_DISCLAIMER } from "@/lib/commercial-api/mock-sales-metrics";
@@ -118,6 +122,8 @@ const buildTemplateContent = (
   industryLargeLabel?: string | null
 ): TemplateContent => {
   const type = resolveTemplateType(b, yearsInBusiness, industryLargeLabel);
+  const roiPack = buildProposalRoiNarrative(type, mailQuantity);
+
   if (type === "A") {
     return {
       type,
@@ -132,16 +138,12 @@ const buildTemplateContent = (
         o: "배달/포장 수요 증가",
         t: "전단지 등 로컬 광고비 상승",
       },
-      roi: `우편물 ${mailQuantity.toLocaleString("ko-KR")}부 발송 시 보수적 전환율 1%(약 ${Math.max(
-        1,
-        Math.round(mailQuantity * 0.01)
-      )}건) 기준으로 즉각적인 매출 증대 효과가 기대됩니다.`,
+      roi: roiPack.roi,
       recommendedQty: mailQuantity,
-      conversionRate: "1.0%",
+      conversionRate: roiPack.conversionRate,
     };
   }
   if (type === "B") {
-    const qty = mailQuantity;
     return {
       type,
       title: "Template B · 도소매업 / 위기 극복형",
@@ -155,15 +157,11 @@ const buildTemplateContent = (
         o: "이벤트/명절 시즌",
         t: "온라인 채널로의 이탈 가속",
       },
-      roi: `우편물 ${qty.toLocaleString("ko-KR")}부 발송 시 전환율 0.5%(약 ${Math.max(
-        1,
-        Math.round(qty * 0.005)
-      )}건) 기준으로 매출 방어 효과가 기대됩니다.`,
-      recommendedQty: qty,
-      conversionRate: "0.5%",
+      roi: roiPack.roi,
+      recommendedQty: mailQuantity,
+      conversionRate: roiPack.conversionRate,
     };
   }
-  const qtyC = mailQuantity;
   return {
     type,
     title: "Template C · 서비스업 / 생활밀착형",
@@ -177,12 +175,9 @@ const buildTemplateContent = (
       o: "지역 내 소비 심리 회복",
       t: "광고 채널 파편화",
     },
-    roi: `우편물 ${qtyC.toLocaleString("ko-KR")}부 발송 시 쿠폰 회수율 2%(약 ${Math.max(
-      1,
-      Math.round(qtyC * 0.02)
-    )}건) 기준으로 신규 단골 확보가 기대됩니다.`,
-    recommendedQty: qtyC,
-    conversionRate: "2.0%",
+    roi: roiPack.roi,
+    recommendedQty: mailQuantity,
+    conversionRate: roiPack.conversionRate,
   };
 };
 
@@ -437,8 +432,9 @@ export const openProposalPrint = (
       </p>
       <p class="muted" style="margin-top:8px;">
         추천 수량 <strong>${template.recommendedQty.toLocaleString("ko-KR")}부</strong> ·
-        기준 전환율 <strong>${template.conversionRate}</strong>
-        (상단 ROI는 시뮬레이션 가정이며, 실제 청구는 우체국 확정 견적·옵션에 따릅니다.)
+        기준 전환·회수율 <strong>${template.conversionRate}</strong><br />
+        ${escapeHtml(PROPOSAL_ROI_SIMULATION_DISCLAIMER)}
+        실제 청구는 우체국 확정 견적·옵션에 따릅니다.
       </p>
       ${
         aptTargetsRows
@@ -465,8 +461,18 @@ export const openProposalPrint = (
 </body>
 </html>`;
 
-  if (printHtmlViaHiddenIframe(fullHtml)) return;
-  if (printHtmlViaPopup(fullHtml)) return;
+  const prefersPopupFirst =
+    typeof navigator !== "undefined" &&
+    (/iP(hone|ad|od)/i.test(navigator.userAgent) ||
+      /Android/i.test(navigator.userAgent));
+
+  if (prefersPopupFirst) {
+    if (printHtmlViaPopup(fullHtml)) return;
+    if (printHtmlViaHiddenIframe(fullHtml)) return;
+  } else {
+    if (printHtmlViaHiddenIframe(fullHtml)) return;
+    if (printHtmlViaPopup(fullHtml)) return;
+  }
 
   window.alert(
     "인쇄 창을 열 수 없습니다. 브라우저 설정에서 이 사이트의 팝업을 허용한 뒤 다시 시도하거나, 다른 브라우저에서 열어 주세요."

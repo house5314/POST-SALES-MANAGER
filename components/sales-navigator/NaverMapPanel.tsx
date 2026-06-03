@@ -253,14 +253,19 @@ export const NaverMapPanel = ({
 
     clearMarkers();
 
+    /** stores API가 null로 정규화한 좌표는 마커 생성 전에 제외(지도 SDK 오류 방지). */
     const plot = businesses
+      .filter((b) => b.lat != null && b.lng != null)
       .map((b) => {
         const corrected = correctedCoords[b.id];
         const renderLat = corrected?.lat ?? b.lat;
         const renderLng = corrected?.lng ?? b.lng;
         return { b, coord: toValidCoordFromPair(renderLat, renderLng) };
       })
-      .filter((x): x is { b: BusinessRow; coord: { lat: number; lng: number } } => x.coord !== null);
+      .filter(
+        (x): x is { b: BusinessRow; coord: { lat: number; lng: number } } =>
+          x.coord !== null
+      );
 
     plot.forEach(({ b, coord }) => {
       const isSelected = b.id === selectedId;

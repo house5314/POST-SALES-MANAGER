@@ -37,6 +37,10 @@ yarn-error.log*
 # vercel
 .vercel
 
+# 공모 제출 ZIP (npm run package:submission)
+/submission-staging/
+/submission/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

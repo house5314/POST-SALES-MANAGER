@@ -30,6 +30,10 @@ const maskResidentLike = (s: string) =>
 const maskLongDigitRuns = (s: string) =>
   s.replace(/\b\d{13,19}\b/g, "[긴숫자열]");
 
+/** 사업자등록번호(XXX-XX-XXXXX)를 치환합니다. */
+const maskBusinessRegNo = (s: string) =>
+  s.replace(/\b\d{3}-\d{2}-\d{5}\b/g, "[사업자번호]");
+
 /**
  * 모델 API에 넣기 직전 문자열을 정제합니다.
  * @param input 사용자 또는 내부에서 조합한 원문
@@ -42,6 +46,7 @@ export const maskSensitiveTextForModel = (input: string): string => {
   out = maskEmails(out);
   out = maskKoreanPhones(out);
   out = maskResidentLike(out);
+  out = maskBusinessRegNo(out);
   out = maskLongDigitRuns(out);
   return out;
 };

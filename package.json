@@ -9,7 +9,8 @@
     "start": "next start",
     "lint": "eslint . --max-warnings 0",
     "validate:env": "node scripts/validate-env.mjs",
-    "verify:public-data": "node scripts/verify-public-data-keys.mjs"
+    "verify:public-data": "node scripts/verify-public-data-keys.mjs",
+    "package:submission": "node scripts/package-submission.mjs"
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.67",

@@ -1,8 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import {
+  detectPublicApiQuotaExceeded,
+  PUBLIC_API_QUOTA_USER_MESSAGE,
+} from "@/lib/api/public-data-quota";
 import { buildMockRevenueTrend } from "@/lib/commercial-api/mock-sales-metrics";
 import { fetchStoreListInDong } from "@/lib/commercial-api/semas-store";
 import type { BusinessRow } from "@/lib/sales/types";
+
+const STORE_PAGE_SIZE = 1000;
+const STORE_MAX_PAGES = 5;
 
 /**
  * 법정동코드 입력을 시군구 조회 + 서버 필터링으로 우회하는 상가 조회 프록시.
@@ -33,9 +40,6 @@ export const GET = async (req: NextRequest) => {
   const indM = searchParams.get("indM")?.trim();
   const indS = searchParams.get("indS")?.trim();
   const indsLclsCd = searchParams.get("indsLclsCd")?.trim();
-  const pageNo = 1;
-  const numOfRows = 1000;
-
   if (!dongCd) {
     return NextResponse.json(
       { ok: false as const, message: "dongCd(법정동코드)가 필요합니다.", rows: [], total: 0 },
@@ -56,15 +60,31 @@ export const GET = async (req: NextRequest) => {
   }
 
   try {
-    const { rows } = await fetchStoreListInDong(key, {
-      divId: "signguCd",
-      key: signguCd,
-      indsLclsCd: indsLclsCd || indL || undefined,
-      indsMclsCd: indM || undefined,
-      indsSclsCd: indS || undefined,
-      pageNo,
-      numOfRows,
-    });
+    let apiTotal = 0;
+    const accumulated: Awaited<
+      ReturnType<typeof fetchStoreListInDong>
+    >["rows"] = [];
+    for (let pageNo = 1; pageNo <= STORE_MAX_PAGES; pageNo += 1) {
+      const page = await fetchStoreListInDong(key, {
+        divId: "signguCd",
+        key: signguCd,
+        indsLclsCd: indsLclsCd || indL || undefined,
+        indsMclsCd: indM || undefined,
+        indsSclsCd: indS || undefined,
+        pageNo,
+        numOfRows: STORE_PAGE_SIZE,
+      });
+      apiTotal = page.total;
+      accumulated.push(...page.rows);
+      if (
+        accumulated.length >= apiTotal ||
+        page.rows.length < STORE_PAGE_SIZE
+      ) {
+        break;
+      }
+    }
+    const truncated = apiTotal > accumulated.length;
+    const rows = accumulated;
     const byLdong = rows.filter((r) => (r.ldongCd ?? "").trim() === dongCd);
     const byIndustry = byLdong.filter((r) => {
       if (indL && (r.indsLclsCd ?? "").trim() !== indL) return false;
@@ -122,9 +142,29 @@ export const GET = async (req: NextRequest) => {
       ok: true as const,
       rows: normalized,
       total: normalized.length,
+      apiTotal,
+      truncated,
+      ...(truncated
+        ? {
+            notice: `소진공 API 기준 전체 ${apiTotal.toLocaleString("ko-KR")}건 중 ${accumulated.length.toLocaleString("ko-KR")}건만 조회되었습니다. 번화 상권은 일부 업체가 누락될 수 있습니다.`,
+          }
+        : {}),
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "상가 조회 실패";
+    const quotaMsg = detectPublicApiQuotaExceeded(msg);
+    if (quotaMsg) {
+      return NextResponse.json(
+        {
+          ok: false as const,
+          code: "QUOTA_EXCEEDED" as const,
+          message: PUBLIC_API_QUOTA_USER_MESSAGE,
+          rows: [],
+          total: 0,
+        },
+        { status: 429 }
+      );
+    }
     if (msg.includes("resultCode\":\"03\"") || msg.includes("NODATA_ERROR")) {
       return NextResponse.json({
         ok: true as const,

@@ -1,4 +1,8 @@
-/** 생활정보홍보우편 접착형 — 우체국 안내 단가(PoC·상담·제안서 공통). */
+/**
+ * 생활정보홍보우편 접착형 — 우체국 안내 단가(PoC·상담·제안서 공통).
+ * 접착형 PoC는 `ADHESIVE_UNIT_PRICE_WON × quantity` 단순 곱셈이며,
+ * `postal-calc.ts`의 DISCOUNT_BRACKETS(대량 감액)는 **비접착형 참고 견적**용입니다.
+ */
 
 export const ADHESIVE_UNIT_PRICE_WON = 360;
 

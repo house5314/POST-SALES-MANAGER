@@ -12,9 +12,15 @@ import type { BusinessRow, MarketStatRow } from "@/lib/sales/types";
 /** URL 쿼리 `demo` 값이 이 문자열이면 데모 모드입니다. */
 export const SALES_NAVIGATOR_DEMO_QUERY_VALUE = "1";
 
+/** 운영 배포에서 URL 데모를 막을 때 `NEXT_PUBLIC_DEMO_DISABLED=true` 로 설정합니다. */
+export const isDemoModeDisabledByEnv = () =>
+  process.env.NEXT_PUBLIC_DEMO_DISABLED === "true";
+
 /** `searchParams.get("demo")` 기준 데모 여부를 판별합니다. */
-export const isSalesNavigatorDemoMode = (demoParam: string | null | undefined) =>
-  demoParam === SALES_NAVIGATOR_DEMO_QUERY_VALUE;
+export const isSalesNavigatorDemoMode = (demoParam: string | null | undefined) => {
+  if (isDemoModeDisabledByEnv()) return false;
+  return demoParam === SALES_NAVIGATOR_DEMO_QUERY_VALUE;
+};
 
 /** 데모 상가·상권 키로 쓰는 고정 행정동 식별자(실제 표준코드와 무관). */
 export const DEMO_DONG_OPTIONS: { value: string; label: string }[] = [

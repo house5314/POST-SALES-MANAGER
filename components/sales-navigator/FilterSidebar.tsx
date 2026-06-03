@@ -32,6 +32,12 @@ type SelectedBusinessEvl = {
 type FilterSidebarProps = {
   sidoOptions: Option[];
   sigunguOptions: Option[];
+  /** 시·군·구 목록을 행정표준 API에서 불러오는 중이면 true. */
+  sigunguOptionsLoading?: boolean;
+  /** 시·군·구 목록 출처(api·정적 폴백). */
+  sigunguSource?: "api" | "static" | null;
+  /** 정적 폴백일 때 데이터 기준일(예: 2026-05). */
+  sigunguStaticAsOf?: string;
   dongOptions: Option[];
   selectedSido: string;
   selectedSigungu: string;
@@ -106,6 +112,9 @@ const getTenureTrajectoryBadge = (yearsInBusiness: number) => {
 export const FilterSidebar = ({
   sidoOptions,
   sigunguOptions,
+  sigunguOptionsLoading = false,
+  sigunguSource = null,
+  sigunguStaticAsOf,
   dongOptions,
   selectedSido,
   selectedSigungu,
@@ -179,10 +188,14 @@ export const FilterSidebar = ({
             value={selectedSigungu || ""}
             onChange={(e) => onSigunguChange(e.target.value)}
             className="w-full"
-            disabled={!selectedSido}
+            disabled={!selectedSido || sigunguOptionsLoading}
           >
             <NativeSelectOption value="">
-              {selectedSido ? "시/군/구 선택" : "먼저 시/도를 선택하세요"}
+              {sigunguOptionsLoading
+                ? "시·군·구 불러오는 중…"
+                : selectedSido
+                  ? "시/군/구 선택"
+                  : "먼저 시/도를 선택하세요"}
             </NativeSelectOption>
             {sigunguOptions.map((r) => (
               <NativeSelectOption key={r.value} value={r.value}>
@@ -190,6 +203,14 @@ export const FilterSidebar = ({
               </NativeSelectOption>
             ))}
           </NativeSelect>
+          {selectedSido && sigunguSource ? (
+            <p className="text-[10px] leading-snug text-muted-foreground">
+              시·군·구:{" "}
+              {sigunguSource === "api"
+                ? "행정표준코드 API"
+                : `정적 목록(기준 ${sigunguStaticAsOf ?? "—"})`}
+            </p>
+          ) : null}
           <NativeSelect
             key={`dong-${selectedSido}-${selectedSigungu}`}
             value={selectedDong || ""}

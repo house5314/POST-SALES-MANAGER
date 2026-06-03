@@ -3,6 +3,12 @@
  * 장애·지연 시 직전 성공 응답을 재사용하고, 불가 시 상위 UI가 안전 모드로 전환합니다.
  */
 
+import {
+  detectPublicApiQuotaExceeded,
+  isHttpQuotaStatus,
+  PUBLIC_API_QUOTA_USER_MESSAGE,
+} from "@/lib/api/public-data-quota";
+
 /** 기본 요청 타임아웃(ms). */
 export const PUBLIC_API_FETCH_TIMEOUT_MS = 3000;
 
@@ -50,6 +56,8 @@ export type PublicApiFetchResult<T> = {
   fromCache: boolean;
   timedOut: boolean;
   networkError: boolean;
+  /** HTTP 429·resultCode 22 등 일일 한도 초과 */
+  quotaExceeded?: boolean;
   message?: string;
 };
 
@@ -104,6 +112,31 @@ export const fetchPublicApiJson = async <T>(
         timedOut: false,
         networkError: true,
         message: "공공 API 응답 형식 오류",
+      };
+    }
+
+    if (isHttpQuotaStatus(res.status)) {
+      return {
+        data: null,
+        ok: false,
+        fromCache: false,
+        timedOut: false,
+        networkError: false,
+        quotaExceeded: true,
+        message: PUBLIC_API_QUOTA_USER_MESSAGE,
+      };
+    }
+
+    const quotaMsg = detectPublicApiQuotaExceeded(data);
+    if (quotaMsg) {
+      return {
+        data: null,
+        ok: false,
+        fromCache: false,
+        timedOut: false,
+        networkError: false,
+        quotaExceeded: true,
+        message: quotaMsg,
       };
     }
 
