@@ -39,6 +39,7 @@ yarn-error.log*
 
 # 공모 제출 ZIP (npm run package:submission)
 /submission-staging/
+/submission-staging-*/
 /submission/
 
 # typescript

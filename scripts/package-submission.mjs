@@ -2,7 +2,7 @@
  * 공모전 제출용 소스 패키지(ZIP) 생성 — node_modules·.next·비밀키 제외.
  * 실행: npm run package:submission
  */
-import { execSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import {
   cpSync,
   existsSync,
@@ -17,8 +17,10 @@ import { basename, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = join(fileURLToPath(new URL(".", import.meta.url)), "..");
-const STAGING = join(ROOT, "submission-staging");
 const OUT_DIR = join(ROOT, "submission");
+
+const dateStamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+const STAGING = join(ROOT, `submission-staging-${dateStamp}`);
 
 const SKIP_DIR_NAMES = new Set([
   "node_modules",
@@ -27,6 +29,7 @@ const SKIP_DIR_NAMES = new Set([
   ".cursor",
   ".vercel",
   "submission-staging",
+  "submission-staging-",
   "submission",
   "coverage",
   "out",
@@ -102,7 +105,6 @@ const collectFiles = (dir, base = "") => {
   return out.sort((a, b) => a.localeCompare(b, "ko"));
 };
 
-const dateStamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
 const zipBase = `POST-SALES-MANAGER-공모제출소스-${dateStamp}`;
 const zipPath = join(OUT_DIR, `${zipBase}.zip`);
 
@@ -111,6 +113,7 @@ if (existsSync(STAGING)) rmSync(STAGING, { recursive: true, force: true });
 mkdirSync(STAGING, { recursive: true });
 mkdirSync(OUT_DIR, { recursive: true });
 
+console.log("[package-submission] 루트 파일 복사…");
 for (const f of ROOT_FILES) {
   const src = join(ROOT, f);
   if (!existsSync(src)) {
@@ -123,9 +126,11 @@ for (const f of ROOT_FILES) {
 for (const d of COPY_DIRS) {
   const src = join(ROOT, d);
   if (!existsSync(src)) continue;
+  console.log(`[package-submission] 디렉터리: ${d}`);
   copyTree(src, join(STAGING, d), d);
 }
 
+console.log("[package-submission] 문서 복사…");
 mkdirSync(join(STAGING, "docs"), { recursive: true });
 for (const doc of COPY_DOCS) {
   const src = join(ROOT, doc);
@@ -162,32 +167,51 @@ writeFileSync(
   "utf8"
 );
 
+/** ZIP 밖 포털 업로드용 MD 복사본(최신 `docs/` 동기화). */
+console.log("[package-submission] 제출 MD 복사…");
+const mdOutDir = join(OUT_DIR, "제출문서");
+mkdirSync(mdOutDir, { recursive: true });
+for (const doc of COPY_DOCS) {
+  const src = join(ROOT, doc);
+  if (!existsSync(src)) continue;
+  cpSync(src, join(mdOutDir, basename(doc)));
+}
+if (existsSync(submissionReadmeSrc)) {
+  cpSync(submissionReadmeSrc, join(mdOutDir, "제출_README.md"));
+}
+const designSrc = join(ROOT, "docs", "개발-설계서.md");
+if (existsSync(designSrc)) {
+  cpSync(designSrc, join(mdOutDir, "개발-설계서.md"));
+}
+
 if (existsSync(zipPath)) rmSync(zipPath, { force: true });
 
-const isWin = process.platform === "win32";
-try {
-  if (isWin) {
-    execSync(
-      `powershell -NoProfile -Command "Compress-Archive -Path '${STAGING.replace(/'/g, "''")}\\*' -DestinationPath '${zipPath.replace(/'/g, "''")}' -Force"`,
-      { stdio: "inherit", cwd: ROOT }
-    );
-  } else {
-    execSync(`tar -a -cf "${zipPath}" -C "${STAGING}" .`, {
-      stdio: "inherit",
-      cwd: ROOT,
-    });
-  }
-} catch (e) {
-  console.error("[package-submission] ZIP 생성 실패:", e.message);
-  console.log(`스테이징 폴더만 생성됨: ${STAGING}`);
+console.log("[package-submission] ZIP 생성…");
+const tarResult = spawnSync("tar", ["-a", "-cf", zipPath, "."], {
+  cwd: STAGING,
+  stdio: "inherit",
+  shell: process.platform === "win32",
+});
+if (tarResult.error || tarResult.status !== 0) {
+  console.error(
+    "[package-submission] ZIP 생성 실패:",
+    tarResult.error?.message ?? `exit ${tarResult.status}`
+  );
+  console.log(`스테이징 폴더 유지: ${STAGING}`);
+  console.log(`제출 MD: ${mdOutDir}`);
   process.exit(1);
 }
 
-rmSync(STAGING, { recursive: true, force: true });
+try {
+  rmSync(STAGING, { recursive: true, force: true });
+} catch (e) {
+  console.warn(`[package-submission] 스테이징 폴더 삭제 건너뜀: ${STAGING}`);
+}
 
 const sizeMb = (statSync(zipPath).size / (1024 * 1024)).toFixed(2);
 console.log("");
 console.log("완료 — 공모 제출용 패키지");
 console.log(`  ZIP: ${zipPath}`);
+console.log(`  MD:  ${mdOutDir}`);
 console.log(`  용량: ${sizeMb} MB · 파일 ${files.length}개`);
-console.log("  함께 제출: docs/개발-설계서.md (필수 서류, ZIP 밖 단독 제출 가능)");
+console.log("  함께 제출: submission/제출문서/개발-설계서.md (필수 서류, ZIP 밖 단독 업로드)");
