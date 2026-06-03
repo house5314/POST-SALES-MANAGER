@@ -127,17 +127,25 @@ export const fetchPublicApiJson = async <T>(
       };
     }
 
-    const quotaMsg = detectPublicApiQuotaExceeded(data);
-    if (quotaMsg) {
-      return {
-        data: null,
-        ok: false,
-        fromCache: false,
-        timedOut: false,
-        networkError: false,
-        quotaExceeded: true,
-        message: quotaMsg,
-      };
+    const bodyOkFalse =
+      data &&
+      typeof data === "object" &&
+      "ok" in data &&
+      (data as { ok: boolean }).ok === false;
+
+    if (!res.ok || bodyOkFalse) {
+      const quotaMsg = detectPublicApiQuotaExceeded(data);
+      if (quotaMsg) {
+        return {
+          data: null,
+          ok: false,
+          fromCache: false,
+          timedOut: false,
+          networkError: false,
+          quotaExceeded: true,
+          message: quotaMsg,
+        };
+      }
     }
 
     if (cacheOnSuccess && res.ok) {

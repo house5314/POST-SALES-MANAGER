@@ -974,7 +974,7 @@ export const SalesNavigatorDashboard = () => {
       notice?: string;
       truncated?: boolean;
       code?: string;
-    }>(url);
+    }>(url, undefined, { timeoutMs: 12_000 });
 
     setApiNotice(
       result.quotaExceeded
@@ -986,16 +986,23 @@ export const SalesNavigatorDashboard = () => {
 
     const data = result.data;
     if (result.quotaExceeded || data?.code === "QUOTA_EXCEEDED") {
+      setOverlayStores([]);
       setApiError(result.message ?? "API 일일 한도 초과. 내일 다시 시도하세요.");
       setSafeMode(true);
       return;
     }
     if (!data?.ok) {
       const msg =
-        data?.message ?? result.message ?? "공공 상가 조회에 실패했습니다.";
+        result.timedOut
+          ? (result.message ??
+            "공공 상가 조회 응답이 지연되었습니다. 잠시 후 다시 시도해 주세요.")
+          : (data?.message ??
+            result.message ??
+            "공공 상가 조회에 실패했습니다.");
       if (process.env.NODE_ENV === "development") {
         console.error("[공공 API · 상가업소]", msg);
       }
+      setOverlayStores([]);
       setApiError(msg);
       setSafeMode(true);
       return;

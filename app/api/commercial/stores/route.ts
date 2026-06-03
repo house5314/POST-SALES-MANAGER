@@ -9,7 +9,6 @@ import { fetchStoreListInDong } from "@/lib/commercial-api/semas-store";
 import type { BusinessRow } from "@/lib/sales/types";
 
 const STORE_PAGE_SIZE = 1000;
-const STORE_MAX_PAGES = 5;
 
 /**
  * 법정동코드 입력을 시군구 조회 + 서버 필터링으로 우회하는 상가 조회 프록시.
@@ -60,31 +59,20 @@ export const GET = async (req: NextRequest) => {
   }
 
   try {
-    let apiTotal = 0;
-    const accumulated: Awaited<
-      ReturnType<typeof fetchStoreListInDong>
-    >["rows"] = [];
-    for (let pageNo = 1; pageNo <= STORE_MAX_PAGES; pageNo += 1) {
-      const page = await fetchStoreListInDong(key, {
-        divId: "signguCd",
-        key: signguCd,
-        indsLclsCd: indsLclsCd || indL || undefined,
-        indsMclsCd: indM || undefined,
-        indsSclsCd: indS || undefined,
-        pageNo,
-        numOfRows: STORE_PAGE_SIZE,
-      });
-      apiTotal = page.total;
-      accumulated.push(...page.rows);
-      if (
-        accumulated.length >= apiTotal ||
-        page.rows.length < STORE_PAGE_SIZE
-      ) {
-        break;
-      }
-    }
-    const truncated = apiTotal > accumulated.length;
-    const rows = accumulated;
+    /** PoC: 1회 조회(≤3초 클라이언트 타임아웃). totalCount만으로 잘림 여부를 안내합니다. */
+    const page = await fetchStoreListInDong(key, {
+      divId: "signguCd",
+      key: signguCd,
+      indsLclsCd: indsLclsCd || indL || undefined,
+      indsMclsCd: indM || undefined,
+      indsSclsCd: indS || undefined,
+      pageNo: 1,
+      numOfRows: STORE_PAGE_SIZE,
+    });
+    const apiTotal = page.total;
+    const truncated =
+      apiTotal > page.rows.length && page.rows.length >= STORE_PAGE_SIZE;
+    const rows = page.rows;
     const byLdong = rows.filter((r) => (r.ldongCd ?? "").trim() === dongCd);
     const byIndustry = byLdong.filter((r) => {
       if (indL && (r.indsLclsCd ?? "").trim() !== indL) return false;
@@ -146,7 +134,7 @@ export const GET = async (req: NextRequest) => {
       truncated,
       ...(truncated
         ? {
-            notice: `소진공 API 기준 전체 ${apiTotal.toLocaleString("ko-KR")}건 중 ${accumulated.length.toLocaleString("ko-KR")}건만 조회되었습니다. 번화 상권은 일부 업체가 누락될 수 있습니다.`,
+            notice: `소진공 API 기준 전체 ${apiTotal.toLocaleString("ko-KR")}건 중 최대 ${STORE_PAGE_SIZE.toLocaleString("ko-KR")}건만 조회되었습니다. 번화 상권은 일부 업체가 누락될 수 있습니다.`,
           }
         : {}),
     });
