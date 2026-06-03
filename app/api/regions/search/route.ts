@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { STAN_REGION_SEARCH_FALLBACK } from "@/lib/commercial-api/stan-fallback";
+import { pickStanRegionFallbackForQuery } from "@/lib/commercial-api/stan-fallback";
 import {
   buildUrlWithExplicitTypeJson,
   parsePublicDataFetchAsJson,
@@ -112,7 +112,7 @@ export const GET = async (req: NextRequest) => {
     if (mapped.length === 0) {
       return NextResponse.json({
         ok: true as const,
-        results: STAN_REGION_SEARCH_FALLBACK,
+        results: pickStanRegionFallbackForQuery(q),
         usedFallback: true,
       });
     }
@@ -129,7 +129,7 @@ export const GET = async (req: NextRequest) => {
         : undefined;
     return NextResponse.json({
       ok: true as const,
-      results: STAN_REGION_SEARCH_FALLBACK,
+      results: pickStanRegionFallbackForQuery(q),
       usedFallback: true,
       message: devMsg,
     });

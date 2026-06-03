@@ -24,6 +24,7 @@ import { SAFE_MODE_DEFAULT_MAIL_QTY } from "@/lib/operations/safe-mode";
 import { getSbizCertKeyPublic } from "@/lib/sbiz-iframe-urls";
 import { cn } from "@/lib/utils";
 import type { MolitAptComplex } from "@/lib/molit/types";
+import { buildAdhesivePostalPricingParagraph } from "@/lib/postal-adhesive-pricing";
 import type { PostalQuote } from "@/lib/postal-calc";
 import type { BusinessRow, MarketStatRow } from "@/lib/sales/types";
 
@@ -197,9 +198,8 @@ export const InsightCenterPanel = ({
     .filter(Boolean)
     .join(" ");
 
-  /** [4] 우편물 형태·단가 안내(접착형) */
-  const roiLine =
-    "'접착형'은 통당 360원이며, 용지 1장(3단 접지, 6면)의 1면에 홍보 내용을 인쇄하여, 3단으로 접어 접착방식으로 봉합한 우편물입니다. 500부 기준으로 180,000원의 비용이 발생하고 추가옵션에 따라 비용이 달라질 수 있습니다.";
+  /** [4] 우편물 형태·단가 안내(접착형, 우체국 금액 기준) */
+  const roiLine = buildAdhesivePostalPricingParagraph(effectiveMailQty);
 
   /** [5] 액션: 마무리 */
   const actionClose = `검토해 보시고, **${effectiveMailQty.toLocaleString("ko-KR")}부** 안으로 시안과 발송 일정을 준비해 드리겠습니다.`;

@@ -34,6 +34,13 @@ import type { MolitAptComplex } from "@/lib/molit/types";
 import { buildMockEvlInfo } from "@/lib/commercial-api/mock-sales-metrics";
 import { calculatePostalQuote } from "@/lib/postal-calc";
 import {
+  buildRegionSearchQuery,
+  formatSelectedDongAddress,
+  isEupMyeonDongName,
+  parseRegionLabel,
+  regionLabelMatchesSelection,
+} from "@/lib/sales/region-hierarchy";
+import {
   buildDemoBusinessRows,
   buildDemoIndustryAvgStat,
   buildDemoMarketByRegion,
@@ -468,19 +475,6 @@ export const SalesNavigatorDashboard = () => {
     "insight" | "filter"
   >("insight");
 
-  /** 지역 라벨을 시/도-시군구-동으로 안전하게 분해합니다. */
-  const parseRegionHierarchy = useCallback(
-    (label: string): { sido: string; sigungu: string; dong: string } => {
-      const parts = label.trim().split(/\s+/).filter(Boolean);
-      return {
-        sido: parts[0] ?? "기타",
-        sigungu: parts[1] ?? "기타",
-        dong: parts[2] ?? label.trim(),
-      };
-    },
-    []
-  );
-
   const sidoOptions = SIDO_LIST;
 
   const indLargeOptions = useMemo<Option[]>(
@@ -499,7 +493,7 @@ export const SalesNavigatorDashboard = () => {
     let isActive = true;
     void (async () => {
       try {
-        const query = `${selectedSido} ${selectedSigungu}`;
+        const query = buildRegionSearchQuery(selectedSido, selectedSigungu);
         const res = await fetch(
           `/api/regions/search?q=${encodeURIComponent(query)}`
         );
@@ -508,15 +502,16 @@ export const SalesNavigatorDashboard = () => {
           results?: { code: string; label: string }[];
         };
         if (!isActive || !data.ok) return;
-        const parentMatched = (data.results ?? []).filter(
-          (r) =>
-            r.label.includes(selectedSido) &&
-            r.label.includes(selectedSigungu)
+        const parentMatched = (data.results ?? []).filter((r) =>
+          regionLabelMatchesSelection(r.label, selectedSido, selectedSigungu)
         );
         const dedupByDong = new Map<string, Option>();
         parentMatched.forEach((r) => {
-          const parsed = parseRegionHierarchy(r.label);
-          if (!parsed.dong) return;
+          const parsed = parseRegionLabel(r.label, {
+            sido: selectedSido,
+            sigungu: selectedSigungu,
+          });
+          if (!parsed.dong || !isEupMyeonDongName(parsed.dong)) return;
           if (!dedupByDong.has(parsed.dong)) {
             dedupByDong.set(parsed.dong, { value: r.code, label: parsed.dong });
           }
@@ -526,6 +521,11 @@ export const SalesNavigatorDashboard = () => {
         );
         if (!isActive) return;
         setDongOptions(next);
+        if (next.length > 0) {
+          setSelectedDong((prev) =>
+            prev && next.some((o) => o.value === prev) ? prev : next[0]!.value
+          );
+        }
       } catch {
         if (isActive) setDongOptions([]);
       }
@@ -533,7 +533,7 @@ export const SalesNavigatorDashboard = () => {
     return () => {
       isActive = false;
     };
-  }, [isDemo, parseRegionHierarchy, selectedSido, selectedSigungu]);
+  }, [isDemo, selectedSido, selectedSigungu]);
 
   /** 대분류 선택 시 중분류를 서버 API로 조회합니다. */
   useEffect(() => {
@@ -633,10 +633,15 @@ export const SalesNavigatorDashboard = () => {
     return dongOptions.find((x) => x.value === selectedDong)?.label ?? "";
   }, [dongOptions, selectedDong]);
 
-  const selectedDongAddress = useMemo(() => {
-    if (!selectedSido || !selectedSigungu || !selectedDongLabel) return null;
-    return `${selectedSido} ${selectedSigungu} ${selectedDongLabel}`;
-  }, [selectedDongLabel, selectedSido, selectedSigungu]);
+  const selectedDongAddress = useMemo(
+    () =>
+      formatSelectedDongAddress(
+        selectedSido,
+        selectedSigungu,
+        selectedDongLabel
+      ),
+    [selectedDongLabel, selectedSido, selectedSigungu]
+  );
 
   const activeId = useMemo(() => {
     if (!pickedId) return null;

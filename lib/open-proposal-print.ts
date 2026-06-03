@@ -1,3 +1,4 @@
+import { buildAdhesivePostalPricingParagraph } from "@/lib/postal-adhesive-pricing";
 import type { PostalQuote } from "@/lib/postal-calc";
 import type { BusinessRow, MarketStatRow } from "@/lib/sales/types";
 import { MOCK_PROPOSAL_PRINT_DISCLAIMER } from "@/lib/commercial-api/mock-sales-metrics";
@@ -290,9 +291,7 @@ export const openProposalPrint = (
     floatingPop: `${resolvedFloatingPop.toLocaleString("ko-KR")}명`,
     households: `${resolvedHouseholds.toLocaleString("ko-KR")}세대`,
   };
-  const estimatedCost = extras?.postalQuote
-    ? extras.postalQuote.finalTotalWon
-    : Math.round(template.recommendedQty * 120);
+  const adhesivePricingText = buildAdhesivePostalPricingParagraph(mailQuantity);
 
   const aptTargetsRows =
     extras?.aptTargets?.length ?
@@ -303,12 +302,6 @@ export const openProposalPrint = (
         )
         .join("")
       : "";
-
-  const postalRows = extras?.postalQuote
-    ? `<tr><td>기준 요금</td><td style="text-align:right">${extras.postalQuote.baseTotalWon.toLocaleString("ko-KR")}원</td></tr>
-       <tr><td>특별 감액(${extras.postalQuote.discountPct}%)</td><td style="text-align:right">−${(extras.postalQuote.baseTotalWon - extras.postalQuote.finalTotalWon).toLocaleString("ko-KR")}원</td></tr>
-       <tr><td><strong>최종 예상</strong></td><td style="text-align:right"><strong>${extras.postalQuote.finalTotalWon.toLocaleString("ko-KR")}원</strong></td></tr>`
-    : "";
 
   const sbizKey = extras?.sbizCertKey?.trim() ?? "";
   const sbizAppendixSrc = sbizKey ? buildSbizIframeSrc("detail", sbizKey) : "";
@@ -438,23 +431,20 @@ export const openProposalPrint = (
     <section class="section">
       <h2>Section 3. 예상 ROI (투자 수익 시뮬레이션)</h2>
       <p>${template.roi}</p>
-      <p>
-        추천 수량 <strong>${template.recommendedQty.toLocaleString("ko-KR")}부</strong> /
-        예상 비용 <strong>${extras?.postalQuote ? `${estimatedCost.toLocaleString("ko-KR")}원 (정밀 견적)` : `약 ${(estimatedCost / 10000).toFixed(1)}만 원`}</strong> /
+      <p style="margin-top:10px;">
+        <strong>우체국 요금 기준(접착형)</strong><br />
+        ${escapeHtml(adhesivePricingText)}
+      </p>
+      <p class="muted" style="margin-top:8px;">
+        추천 수량 <strong>${template.recommendedQty.toLocaleString("ko-KR")}부</strong> ·
         기준 전환율 <strong>${template.conversionRate}</strong>
+        (상단 ROI는 시뮬레이션 가정이며, 실제 청구는 우체국 확정 견적·옵션에 따릅니다.)
       </p>
       ${
         aptTargetsRows
           ? `<table style="width:100%;border-collapse:collapse;font-size:11px;margin-top:8px;">
       <thead><tr><th style="text-align:left;border-bottom:1px solid #e2e8f0;padding:4px;">타겟 단지</th><th style="text-align:right;border-bottom:1px solid #e2e8f0;padding:4px;">세대수</th></tr></thead>
       <tbody>${aptTargetsRows}</tbody>
-    </table>`
-          : ""
-      }
-      ${
-        postalRows
-          ? `<table style="width:100%;border-collapse:collapse;font-size:11px;margin-top:10px;">
-      <tbody>${postalRows}</tbody>
     </table>`
           : ""
       }
