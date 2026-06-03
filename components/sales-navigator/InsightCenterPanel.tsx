@@ -10,7 +10,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { AiInsightSummaryCard } from "@/components/sales-navigator/AiInsightSummaryCard";
 import { openProposalPrint } from "@/lib/open-proposal-print";
 import {
   MARKET_STAT_METRICS_SOURCE_LABEL,
@@ -284,15 +283,6 @@ export const InsightCenterPanel = ({
           </ul>
         </div>
       </div>
-
-      <AiInsightSummaryCard
-        business={business}
-        market={market}
-        effectiveMailQty={effectiveMailQty}
-        yearsInBusiness={evlInfo?.yearsInBusiness}
-        isPriority={isPriority}
-        regionLabel={resolvedRegionLabel}
-      />
 
       <Card size="sm" className="shrink-0 border-brand-primary/15 py-3 font-sans text-sm shadow-sm ring-brand-primary/10">
         <CardHeader className="space-y-1.5 px-4 pb-2 pt-0 sm:px-5">
