@@ -60,8 +60,6 @@ type InsightCenterPanelProps = {
   singleScrollSurface?: boolean;
   /** 공공 API 장애·지연 시 기본 견적 부수로 표시 중이면 true. */
   safeMode?: boolean;
-  /** 제안서(인쇄/PDF) 생성 직후 PoC KPI 갱신용. */
-  onProposalIssued?: () => void;
 };
 
 /** 전월 대비 매출 변동률을 막대 스케일로 시각화합니다. */
@@ -148,7 +146,6 @@ export const InsightCenterPanel = ({
   selectedAptIds,
   singleScrollSurface = false,
   safeMode = false,
-  onProposalIssued,
 }: InsightCenterPanelProps) => {
   if (!business) {
     return (
@@ -469,7 +466,6 @@ export const InsightCenterPanel = ({
                     industryLargeLabel: selectedLargeName.trim() || null,
                   }
                 );
-                onProposalIssued?.();
               }}
             >
               <FileDown className="size-3.5" data-icon="inline-start" />

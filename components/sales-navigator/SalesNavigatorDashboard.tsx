@@ -16,7 +16,6 @@ import {
 } from "@/components/sales-navigator/FilterSidebar";
 import { InsightCenterPanel } from "@/components/sales-navigator/InsightCenterPanel";
 import { NaverMapPanel } from "@/components/sales-navigator/NaverMapPanel";
-import { PocImpactPanel } from "@/components/sales-navigator/PocImpactPanel";
 import { SessionFeedbackBar } from "@/components/sales-navigator/SessionFeedbackBar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -59,12 +58,6 @@ import { fetchSigunguOptionsForSido } from "@/lib/sales/fetch-sigungu-options";
 import { resolveLegalDongForMolit } from "@/lib/sales/resolve-legal-dong-for-molit";
 import { getStaticSigunguOptions } from "@/lib/sales/sigungu-static-data";
 import { isPriorityLead } from "@/lib/sales/priority-lead";
-import {
-  recordPocProposalIssued,
-  recordPocSafeMode,
-  recordPocSystemQuote,
-  startPocSession,
-} from "@/lib/operations/poc-kpi";
 import type { BusinessRow, MarketStatRow } from "@/lib/sales/types";
 import {
   clearPublicApiMemoryCache,
@@ -162,7 +155,6 @@ export const SalesNavigatorDashboard = () => {
   const [sigunguStaticAsOf, setSigunguStaticAsOf] = useState<
     string | undefined
   >();
-  const [kpiRefreshToken, setKpiRefreshToken] = useState(0);
   const [dongOptions, setDongOptions] = useState<Option[]>([]);
   const [indMediumOptions, setIndMediumOptions] = useState<Option[]>([]);
   const [indSmallOptions, setIndSmallOptions] = useState<Option[]>([]);
@@ -571,30 +563,7 @@ export const SalesNavigatorDashboard = () => {
     [effectiveMailQty]
   );
 
-  const lastRecordedMailQtyRef = useRef<number | null>(null);
-  const safeModeRecordedRef = useRef(false);
-
-  useEffect(() => {
-    startPocSession();
-    return () => clearPublicApiMemoryCache();
-  }, []);
-
-  useEffect(() => {
-    if (effectiveMailQty <= 0) return;
-    if (lastRecordedMailQtyRef.current === effectiveMailQty) return;
-    lastRecordedMailQtyRef.current = effectiveMailQty;
-    recordPocSystemQuote();
-  }, [effectiveMailQty]);
-
-  useEffect(() => {
-    if (!safeMode) {
-      safeModeRecordedRef.current = false;
-      return;
-    }
-    if (safeModeRecordedRef.current) return;
-    safeModeRecordedRef.current = true;
-    recordPocSafeMode();
-  }, [safeMode]);
+  useEffect(() => () => clearPublicApiMemoryCache(), []);
 
   /** 지도 반경 원 중심 — 상가 좌표가 유효할 때만 표시합니다. */
   const radiusAnchor = useMemo(() => {
@@ -1106,11 +1075,7 @@ export const SalesNavigatorDashboard = () => {
         </p>
       </header>
 
-      <PocImpactPanel refreshToken={kpiRefreshToken} />
-      <SessionFeedbackBar
-        demoMode={isDemo}
-        onSubmitted={() => setKpiRefreshToken((n) => n + 1)}
-      />
+      <SessionFeedbackBar demoMode={isDemo} />
 
       {safeMode ? (
         <div
@@ -1178,10 +1143,6 @@ export const SalesNavigatorDashboard = () => {
               apartments={aptRows}
               selectedAptIds={selectedAptIds}
               safeMode={safeMode}
-              onProposalIssued={() => {
-                recordPocProposalIssued();
-                setKpiRefreshToken((n) => n + 1);
-              }}
             />
           </div>
           <div className="hidden min-h-0 lg:block lg:w-[20%]">
@@ -1308,10 +1269,6 @@ export const SalesNavigatorDashboard = () => {
                 selectedAptIds={selectedAptIds}
                 singleScrollSurface
                 safeMode={safeMode}
-                onProposalIssued={() => {
-                  recordPocProposalIssued();
-                  setKpiRefreshToken((n) => n + 1);
-                }}
               />
             </TabsContent>
             <TabsContent
