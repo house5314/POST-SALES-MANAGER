@@ -1142,6 +1142,7 @@ export const SalesNavigatorDashboard = () => {
               selectedDongLabel={selectedDongLabel}
               apartments={aptRows}
               selectedAptIds={selectedAptIds}
+              businesses={filtered}
               safeMode={safeMode}
             />
           </div>
@@ -1267,6 +1268,7 @@ export const SalesNavigatorDashboard = () => {
                 selectedDongLabel={selectedDongLabel}
                 apartments={aptRows}
                 selectedAptIds={selectedAptIds}
+                businesses={filtered}
                 singleScrollSurface
                 safeMode={safeMode}
               />

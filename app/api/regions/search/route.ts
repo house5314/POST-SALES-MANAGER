@@ -7,6 +7,7 @@ import {
 } from "@/lib/commercial-api/public-data-response";
 import { toStanApiLocataddNm } from "@/lib/commercial-api/stan-search-query";
 import { STAN_REGIN_BASE_URL } from "@/lib/api/public-data-endpoints";
+import { getOrSetCached } from "@/lib/api/server-cache";
 
 /** 행정표준코드 지역명 검색(행정동 코드 후보). */
 export const GET = async (req: NextRequest) => {
@@ -33,7 +34,10 @@ export const GET = async (req: NextRequest) => {
 
   const apiLocatNm = toStanApiLocataddNm(q);
 
-  const fetchStanRows = async (locataddNm: string) => {
+  /** 행정표준코드는 개편 전까지 불변 — 1시간 캐시로 반복 검색 쿼터를 절감합니다. */
+  const STAN_CACHE_TTL_MS = 60 * 60 * 1000;
+
+  const fetchStanRowsUncached = async (locataddNm: string) => {
     const params = new URLSearchParams();
     params.set("serviceKey", key);
     params.set("pageNo", "1");
@@ -69,6 +73,13 @@ export const GET = async (req: NextRequest) => {
         ?.row ?? []
     );
   };
+
+  const fetchStanRows = async (locataddNm: string) =>
+    (
+      await getOrSetCached(`stan:${locataddNm}`, STAN_CACHE_TTL_MS, () =>
+        fetchStanRowsUncached(locataddNm)
+      )
+    ).value;
 
   try {
     let rows: { region_cd?: string; locatadd_nm?: string }[] = [];

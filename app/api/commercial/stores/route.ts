@@ -4,11 +4,14 @@ import {
   detectPublicApiQuotaExceeded,
   PUBLIC_API_QUOTA_USER_MESSAGE,
 } from "@/lib/api/public-data-quota";
+import { getOrSetCached } from "@/lib/api/server-cache";
 import { buildMockRevenueTrend } from "@/lib/commercial-api/mock-sales-metrics";
 import { fetchStoreListInDong } from "@/lib/commercial-api/semas-store";
 import type { BusinessRow } from "@/lib/sales/types";
 
 const STORE_PAGE_SIZE = 1000;
+/** 상가 데이터는 분기 갱신(소진공)이라 10분 캐시로 쿼터·지연을 절감합니다. */
+const STORE_CACHE_TTL_MS = 10 * 60 * 1000;
 
 /**
  * 법정동코드 입력을 시군구 조회 + 서버 필터링으로 우회하는 상가 조회 프록시.
@@ -60,15 +63,21 @@ export const GET = async (req: NextRequest) => {
 
   try {
     /** PoC: 1회 조회(≤3초 클라이언트 타임아웃). totalCount만으로 잘림 여부를 안내합니다. */
-    const page = await fetchStoreListInDong(key, {
-      divId: "signguCd",
-      key: signguCd,
-      indsLclsCd: indsLclsCd || indL || undefined,
-      indsMclsCd: indM || undefined,
-      indsSclsCd: indS || undefined,
-      pageNo: 1,
-      numOfRows: STORE_PAGE_SIZE,
-    });
+    const cacheKey = `stores:${signguCd}:${indsLclsCd || indL || ""}:${indM || ""}:${indS || ""}`;
+    const { value: page, hit: cacheHit } = await getOrSetCached(
+      cacheKey,
+      STORE_CACHE_TTL_MS,
+      () =>
+        fetchStoreListInDong(key, {
+          divId: "signguCd",
+          key: signguCd,
+          indsLclsCd: indsLclsCd || indL || undefined,
+          indsMclsCd: indM || undefined,
+          indsSclsCd: indS || undefined,
+          pageNo: 1,
+          numOfRows: STORE_PAGE_SIZE,
+        })
+    );
     const apiTotal = page.total;
     const truncated =
       apiTotal > page.rows.length && page.rows.length >= STORE_PAGE_SIZE;
@@ -126,18 +135,21 @@ export const GET = async (req: NextRequest) => {
         mappedId: first?.id,
       });
     }
-    return NextResponse.json({
-      ok: true as const,
-      rows: normalized,
-      total: normalized.length,
-      apiTotal,
-      truncated,
-      ...(truncated
-        ? {
-            notice: `소진공 API 기준 전체 ${apiTotal.toLocaleString("ko-KR")}건 중 최대 ${STORE_PAGE_SIZE.toLocaleString("ko-KR")}건만 조회되었습니다. 번화 상권은 일부 업체가 누락될 수 있습니다.`,
-          }
-        : {}),
-    });
+    return NextResponse.json(
+      {
+        ok: true as const,
+        rows: normalized,
+        total: normalized.length,
+        apiTotal,
+        truncated,
+        ...(truncated
+          ? {
+              notice: `소진공 API 기준 전체 ${apiTotal.toLocaleString("ko-KR")}건 중 최대 ${STORE_PAGE_SIZE.toLocaleString("ko-KR")}건만 조회되었습니다. 번화 상권은 일부 업체가 누락될 수 있습니다.`,
+            }
+          : {}),
+      },
+      { headers: { "X-Cache": cacheHit ? "HIT" : "MISS" } }
+    );
   } catch (e) {
     const msg = e instanceof Error ? e.message : "상가 조회 실패";
     const quotaMsg = detectPublicApiQuotaExceeded(msg);

@@ -26,6 +26,7 @@ import { cn } from "@/lib/utils";
 import type { MolitAptComplex } from "@/lib/molit/types";
 import { buildAdhesivePostalPricingParagraph } from "@/lib/postal-adhesive-pricing";
 import type { PostalQuote } from "@/lib/postal-calc";
+import { computeTargetScore } from "@/lib/sales/target-scoring";
 import type { BusinessRow, MarketStatRow } from "@/lib/sales/types";
 
 type InsightCenterPanelProps = {
@@ -52,6 +53,8 @@ type InsightCenterPanelProps = {
   selectedDongLabel: string;
   apartments: MolitAptComplex[];
   selectedAptIds: Set<string>;
+  /** 현재 필터 결과 업체 목록(우선순위 점수의 경쟁 밀도 계산용·선택). */
+  businesses?: BusinessRow[];
   /**
    * 모바일 하단 시트 등 부모가 스크롤을 맡을 때 true.
    * 내부 이중 스크롤을 줄입니다.
@@ -143,6 +146,7 @@ export const InsightCenterPanel = ({
   selectedDongLabel,
   apartments,
   selectedAptIds,
+  businesses = [],
   singleScrollSurface = false,
   safeMode = false,
 }: InsightCenterPanelProps) => {
@@ -169,6 +173,20 @@ export const InsightCenterPanel = ({
   /** 전월 대비 매출 변동률(상권·업체 지표)을 기준으로 기회/위기 멘트를 구성합니다. */
   const revenuePct = business.revenueTrend;
   const revenuePctLabel = `${revenuePct > 0 ? "+" : ""}${revenuePct}%`;
+
+  /** 영업 우선순위 점수 — 매출·배후 수요·경쟁 밀도·유동인구 가중합(규칙 기반·결정적). */
+  const businessCategoryKey = business.indsSclsCd || business.category;
+  const sameCategoryCount = Math.max(
+    0,
+    businesses.filter((b) => (b.indsSclsCd || b.category) === businessCategoryKey)
+      .length - 1
+  );
+  const targetScore = computeTargetScore({
+    revenueTrendPct: business.revenueTrend,
+    households: market?.dongHouseholds ?? market?.housingCount ?? 0,
+    sameCategoryCount,
+    floatingPop: market?.floatingPop ?? 0,
+  });
 
   /** [1] 도입: 업력 기반 공감(업력은 평균·정수 연차 기준). */
   const empathyIntro =
@@ -311,6 +329,42 @@ export const InsightCenterPanel = ({
           neutralFilterCopy={singleScrollSurface}
         />
       </div>
+
+      {/* 영업 우선순위 점수: 매출·배후 수요·경쟁·유동인구 가중합(규칙 기반) */}
+      <Card className="shrink-0 border-border/80 font-sans text-sm shadow-sm">
+        <CardHeader className="pb-2">
+          <div className="flex items-center justify-between gap-2">
+            <CardTitle className="font-sans text-sm font-semibold normal-case tracking-wide">
+              영업 우선순위 점수
+            </CardTitle>
+            <span
+              className={cn(
+                "rounded-none px-2 py-0.5 text-xs font-bold tracking-wide text-white",
+                targetScore.grade === "A"
+                  ? "bg-brand-negative"
+                  : targetScore.grade === "B"
+                    ? "bg-brand-primary"
+                    : "bg-muted-foreground"
+              )}
+              title="A: 우선 제안 / B: 검토 / C: 후순위"
+            >
+              {targetScore.grade}등급 · {targetScore.score}점
+            </span>
+          </div>
+          <CardDescription className="text-xs leading-snug">
+            매출 추세(40%)·배후 세대(30%)·동일 업종 경쟁(20%)·유동인구(10%)를
+            정규화해 합산한 규칙 기반 점수입니다. 매출 추세는 시연용 가공
+            지표를 사용합니다.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="pt-0">
+          <ul className="list-disc space-y-1 pl-4 text-xs leading-snug text-muted-foreground">
+            {targetScore.reasons.map((reason) => (
+              <li key={reason}>{reason}</li>
+            ))}
+          </ul>
+        </CardContent>
+      </Card>
 
       <Card
         size="sm"
