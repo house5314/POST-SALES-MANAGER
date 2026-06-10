@@ -5,8 +5,9 @@ import {
   buildUrlWithExplicitTypeJson,
   parsePublicDataFetchAsJson,
 } from "@/lib/commercial-api/public-data-response";
+import { SEMAS_BASE_URL } from "@/lib/api/public-data-endpoints";
 
-const SEMAS_BASE = "https://apis.data.go.kr/B553077/api/open/sdsc2";
+const SEMAS_BASE = SEMAS_BASE_URL;
 const getServiceKeyCandidates = (serviceKey: string): string[] => {
   let decoded = serviceKey;
   try {

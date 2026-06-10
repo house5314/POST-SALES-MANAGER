@@ -8,11 +8,9 @@ import {
 import { haversineDistanceM } from "@/lib/molit/haversine";
 import { normalizeMolitAptItem } from "@/lib/molit/normalize-apt-item";
 import type { MolitAptComplex } from "@/lib/molit/types";
+import { MOLIT_APT_ENDPOINT_CANDIDATES } from "@/lib/api/public-data-endpoints";
 
-const APT_ENDPOINT_CANDIDATES = [
-  "https://apis.data.go.kr/1613000/AptListService3/getLegaldongAptList3",
-  "https://apis.data.go.kr/1613000/AptListService3_0.1/getLegaldongAptList3",
-] as const;
+const APT_ENDPOINT_CANDIDATES = MOLIT_APT_ENDPOINT_CANDIDATES;
 
 const getServiceKeyCandidates = (serviceKey: string): string[] => {
   let decoded = serviceKey;

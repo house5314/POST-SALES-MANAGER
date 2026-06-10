@@ -28,6 +28,7 @@ const parseEnvLocal = (raw) => {
 
 /** 상가 storeListInDong 최소 호출로 serviceKey 유효성을 확인합니다. */
 const probeDataGoKrSemas = async (serviceKey) => {
+  // 공공데이터포털 공식 공개 endpoint(시크릿 없음) — 개발용 점검 스크립트라 고정값 사용
   const base = "https://apis.data.go.kr/B553077/api/open/sdsc2/storeListInDong";
   const params = new URLSearchParams({
     divId: "signguCd",

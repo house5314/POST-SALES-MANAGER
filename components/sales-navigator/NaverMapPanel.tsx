@@ -681,6 +681,7 @@ export const NaverMapPanel = ({
       </div>
 
       {clientId ? (
+        // 네이버 지도 공식 공개 CDN(시크릿 없음) — 인증키(ncpKeyId)는 NEXT_PUBLIC 환경변수로 주입
         <Script
           strategy="afterInteractive"
           src={`https://oapi.map.naver.com/openapi/v3/maps.js?ncpKeyId=${encodeURIComponent(clientId)}&submodules=geocoder`}

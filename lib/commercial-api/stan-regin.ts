@@ -4,8 +4,9 @@ import {
   buildUrlWithExplicitTypeJson,
   parsePublicDataFetchAsJson,
 } from "@/lib/commercial-api/public-data-response";
+import { STAN_REGIN_BASE_URL } from "@/lib/api/public-data-endpoints";
 
-const STAN_BASE = "https://apis.data.go.kr/1741000/StanReginCd";
+const STAN_BASE = STAN_REGIN_BASE_URL;
 
 export type StanRegionItem = {
   locatadd_nm?: string;

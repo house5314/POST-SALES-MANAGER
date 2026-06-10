@@ -1,8 +1,8 @@
 /**
  * 공모전 제출용 소스 패키지(ZIP) 생성 — node_modules·.next·비밀키 제외.
+ * UTF-8 flag 강제 ZIP 생성 + §1.5 자가 점검(사이즈·시크릿·UTF-8·파일명 길이) 자동 실행.
  * 실행: npm run package:submission
  */
-import { spawnSync } from "node:child_process";
 import {
   cpSync,
   existsSync,
@@ -15,12 +15,17 @@ import {
 } from "node:fs";
 import { basename, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createUtf8Zip } from "./zip-utf8.mjs";
+import { verifySubmissionZip } from "./verify-submission-zip.mjs";
 
 const ROOT = join(fileURLToPath(new URL(".", import.meta.url)), "..");
 const OUT_DIR = join(ROOT, "submission");
 
 const dateStamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-const STAGING = join(ROOT, `submission-staging-${dateStamp}`);
+/** CLI: `node scripts/package-submission.mjs "제출용(20260604)"` */
+const zipBase = process.argv[2]?.trim() || `POST-SALES-MANAGER-공모제출소스-${dateStamp}`;
+const stagingId = zipBase.replace(/[^\w\uAC00-\uD7A3()-]+/g, "_").slice(0, 80) || dateStamp;
+const STAGING = join(ROOT, `submission-staging-${stagingId}`);
 
 const SKIP_DIR_NAMES = new Set([
   "node_modules",
@@ -105,7 +110,6 @@ const collectFiles = (dir, base = "") => {
   return out.sort((a, b) => a.localeCompare(b, "ko"));
 };
 
-const zipBase = `POST-SALES-MANAGER-공모제출소스-${dateStamp}`;
 const zipPath = join(OUT_DIR, `${zipBase}.zip`);
 
 console.log("[package-submission] 스테이징 초기화…");
@@ -186,19 +190,20 @@ if (existsSync(designSrc)) {
 
 if (existsSync(zipPath)) rmSync(zipPath, { force: true });
 
-console.log("[package-submission] ZIP 생성…");
-const tarResult = spawnSync("tar", ["-a", "-cf", zipPath, "."], {
-  cwd: STAGING,
-  stdio: "inherit",
-  shell: process.platform === "win32",
-});
-if (tarResult.error || tarResult.status !== 0) {
-  console.error(
-    "[package-submission] ZIP 생성 실패:",
-    tarResult.error?.message ?? `exit ${tarResult.status}`
-  );
+console.log("[package-submission] ZIP 생성(UTF-8 flag 강제)…");
+try {
+  createUtf8Zip(STAGING, zipPath);
+} catch (e) {
+  console.error("[package-submission] ZIP 생성 실패:", e?.message ?? e);
   console.log(`스테이징 폴더 유지: ${STAGING}`);
   console.log(`제출 MD: ${mdOutDir}`);
+  process.exit(1);
+}
+
+console.log("[package-submission] §1.5 자가 점검 4종 실행…");
+if (!verifySubmissionZip(zipPath)) {
+  console.error("[package-submission] 자가 점검 실패 — ZIP 을 점검 후 재생성하세요.");
+  console.log(`스테이징 폴더 유지: ${STAGING}`);
   process.exit(1);
 }
 

@@ -91,6 +91,7 @@ const ChartStyle = ({ id, config }: { id: string; config: ChartConfig }) => {
   }
 
   return (
+    // 내부에서 생성한 차트 테마 CSS 변수만 주입(사용자 입력 미포함) — XSS 위험 없음 (shadcn/ui 표준 패턴)
     <style
       dangerouslySetInnerHTML={{
         __html: Object.entries(THEMES)

@@ -6,6 +6,7 @@ import {
   parsePublicDataFetchAsJson,
 } from "@/lib/commercial-api/public-data-response";
 import { toStanApiLocataddNm } from "@/lib/commercial-api/stan-search-query";
+import { STAN_REGIN_BASE_URL } from "@/lib/api/public-data-endpoints";
 
 /** 행정표준코드 지역명 검색(행정동 코드 후보). */
 export const GET = async (req: NextRequest) => {
@@ -40,7 +41,7 @@ export const GET = async (req: NextRequest) => {
     params.set("type", "json");
     params.set("locatadd_nm", locataddNm);
     const url = buildUrlWithExplicitTypeJson(
-      "https://apis.data.go.kr/1741000/StanReginCd/getStanReginCdList",
+      `${STAN_REGIN_BASE_URL}/getStanReginCdList`,
       params
     );
     const res = await fetch(url, { next: { revalidate: 0 } });
