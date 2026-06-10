@@ -8,12 +8,11 @@ import {
   existsSync,
   mkdirSync,
   readdirSync,
-  readFileSync,
   rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
-import { basename, join, relative } from "node:path";
+import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createUtf8Zip } from "./zip-utf8.mjs";
 import { verifySubmissionZip } from "./verify-submission-zip.mjs";
@@ -59,6 +58,7 @@ const ROOT_FILES = [
   "package.json",
   "package-lock.json",
   "tsconfig.json",
+  "vitest.config.ts",
   "next.config.ts",
   "eslint.config.mjs",
   "postcss.config.mjs",
@@ -69,7 +69,7 @@ const ROOT_FILES = [
   "README.md",
 ];
 
-const COPY_DIRS = ["app", "components", "lib", "hooks", "types", "public", "scripts", ".github"];
+const COPY_DIRS = ["app", "components", "lib", "hooks", "types", "public", "scripts", "tests", ".github"];
 
 const COPY_DOCS = [
   "docs/개발-설계서.md",
@@ -209,7 +209,7 @@ if (!verifySubmissionZip(zipPath)) {
 
 try {
   rmSync(STAGING, { recursive: true, force: true });
-} catch (e) {
+} catch {
   console.warn(`[package-submission] 스테이징 폴더 삭제 건너뜀: ${STAGING}`);
 }
 

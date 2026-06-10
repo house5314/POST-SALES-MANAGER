@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // 제출 패키징 산출물·임시 스테이징 폴더
+    "submission/**",
+    "submission-staging*/**",
   ]),
 ]);
 
