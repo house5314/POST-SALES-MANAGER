@@ -11,7 +11,7 @@
 |------|------|
 | **필수 서류** | `docs/개발-설계서.md` (ZIP 포함·포털에 단독 업로드 가능) |
 | **소스 코드** | `POST-SALES-MANAGER-공모제출소스-YYYYMMDD.zip` (본 패키지) |
-| **시연 URL** | https://post-sales-manager.vercel.app · 데모: `?demo=1` |
+| **시연 URL** | https://post-sales-manager.co.kr (보조: https://post-sales-manager.vercel.app) · 데모: `?demo=1` |
 
 ---
 
